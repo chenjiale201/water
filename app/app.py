@@ -701,10 +701,6 @@ st.markdown('''
 </style>
 ''', unsafe_allow_html=True)
 
-if page != '🏠 首页概览':
-    st.markdown('<div class="offline-banner"><b>离线决策演示</b>　当前结果基于项目本地数据和已训练模型；接口接入后可连接真实GIS、SCADA与工单系统。</div>', unsafe_allow_html=True)
-    st.markdown('<div class="flow-ribbon"><span class="flow-step">① 风险排序</span><span class="flow-arrow">→</span><span class="flow-step">② SHAP解释</span><span class="flow-arrow">→</span><span class="flow-step">③ 预算规划</span><span class="flow-arrow">→</span><span class="flow-step">④ 巡检派单</span></div>', unsafe_allow_html=True)
-
 if st.session_state.get('_flash_notice'):
     st.success(st.session_state.pop('_flash_notice'), icon='✅')
 
