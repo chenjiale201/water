@@ -1,4 +1,4 @@
-﻿"""
+"""
 大口径供水管网安全风险智能评估与决策 — 交互式可视化系统
 启动: streamlit run app.py
 """
@@ -613,7 +613,7 @@ with st.sidebar.container(border=True):
         </style>
         ''', unsafe_allow_html=True)
 
-visible_pages = ROLE_MAP[role]['pages']
+visible_pages = list(ROLE_MAP[role]['pages'])
 for _forced_page in st.session_state.get('_force_pages', []):
     if _forced_page not in visible_pages:
         visible_pages.append(_forced_page)
@@ -647,7 +647,25 @@ with st.sidebar.container(border=True):
         _p0 = int((merged['risk_prob'] >= 0.75).sum())
         st.caption(f'🔥 {_p0}条P0 | 📡 {int(len(merged)*0.98)}条在线')
 
-page = st.sidebar.selectbox('🧭 导航', visible_pages)
+_pending_page = st.session_state.pop('_quick_nav', None)
+if _pending_page in visible_pages:
+    st.session_state['_nav_page'] = _pending_page
+if st.session_state.get('_nav_page') not in visible_pages:
+    st.session_state['_nav_page'] = visible_pages[0]
+page = st.sidebar.selectbox('🧭 导航', visible_pages, key='_nav_page')
+_previous_page = st.session_state.get('_last_page')
+_nav_history = st.session_state.setdefault('_nav_history', [])
+if _previous_page and _previous_page != page:
+    if not st.session_state.pop('_nav_back', False):
+        _nav_history.append(_previous_page)
+    st.session_state['_nav_history'] = _nav_history[-20:]
+st.session_state['_last_page'] = page
+if st.sidebar.button('← 返回上一界面', disabled=not _nav_history, width='stretch'):
+    _back_page = _nav_history.pop()
+    st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + [_back_page]))
+    st.session_state['_quick_nav'] = _back_page
+    st.session_state['_nav_back'] = True
+    st.rerun()
 
 with st.sidebar:
     st.caption(f"当前账号：{st.session_state.get('auth_username', '演示用户')}")
@@ -656,12 +674,7 @@ with st.sidebar:
             st.session_state.pop(_key, None)
         st.rerun()
 
-# —— 快捷跳转处理 ——
-if '_quick_nav' in st.session_state and st.session_state['_quick_nav']:
-    _target = st.session_state['_quick_nav']
-    del st.session_state['_quick_nav']
-    if _target in visible_pages:
-        page = _target
+# 快捷跳转在导航控件创建前处理，保持页面与导航选择同步。
 if st.session_state.get('global_dark', False):
     st.markdown('''
     <style>
@@ -788,23 +801,23 @@ with st.spinner('加载中...'):
         _ql = st.columns(5)
         if _qr in ['一线巡检员', '片区巡检组长']:
             with _ql[0]:
-                if st.button('📋 巡检工单', width="stretch"): st.session_state['_quick_nav'] = '📋 巡检工单'
+                if st.button('📋 巡检工单', width="stretch"): st.session_state['_quick_nav'] = '📋 巡检工单'; st.rerun()
             with _ql[1]:
-                if st.button('📋 高风险名单', width="stretch"): st.session_state['_quick_nav'] = '📋 高风险名单'
+                if st.button('📋 高风险名单', width="stretch"): st.session_state['_quick_nav'] = '📋 高风险名单'; st.rerun()
             with _ql[2]:
-                if st.button('🚨 应急响应', width="stretch"): st.session_state['_quick_nav'] = '🚨 应急响应'
+                if st.button('🚨 应急响应', width="stretch"): st.session_state['_quick_nav'] = '🚨 应急响应'; st.rerun()
         elif _qr in ['运维调度主管']:
             with _ql[0]:
-                if st.button('🖥️ 调度大屏', width="stretch"): st.session_state['_quick_nav'] = '🖥️ 调度大屏'
+                if st.button('🖥️ 调度大屏', width="stretch"): st.session_state['_quick_nav'] = '🖥️ 调度大屏'; st.rerun()
             with _ql[1]:
-                if st.button('📈 预算规划', width="stretch"): st.session_state['_quick_nav'] = '📈 预算规划'
+                if st.button('📈 预算规划', width="stretch"): st.session_state['_quick_nav'] = '📈 预算规划'; st.rerun()
             with _ql[2]:
-                if st.button('🗺️ 风险地图', width="stretch"): st.session_state['_quick_nav'] = '🗺️ 风险地图'
+                if st.button('🗺️ 风险地图', width="stretch"): st.session_state['_quick_nav'] = '🗺️ 风险地图'; st.rerun()
         elif _qr in ['系统管理员']:
             with _ql[0]:
-                if st.button('🔬 SHAP归因', width="stretch"): st.session_state['_quick_nav'] = '🔬 SHAP归因'
+                if st.button('🔬 SHAP归因', width="stretch"): st.session_state['_quick_nav'] = '🔬 SHAP归因'; st.rerun()
             with _ql[1]:
-                if st.button('🧪 What-If沙盘', width="stretch"): st.session_state['_quick_nav'] = '🧪 What-If沙盘'
+                if st.button('🧪 What-If沙盘', width="stretch"): st.session_state['_quick_nav'] = '🧪 What-If沙盘'; st.rerun()
 
     # —— 系统管理员只读运行总览：数据、模型、工单和审计均取自本地真实文件 ——
     if _qr == '系统管理员':
