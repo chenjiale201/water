@@ -16,6 +16,10 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 warnings.filterwarnings('ignore')
 
 _APP_DIR = Path(__file__).resolve().parent
@@ -224,6 +228,16 @@ def _setup_font():
 
     fontManager.__init__()
     plt.rcParams['axes.unicode_minus'] = False
+
+@st.cache_resource(show_spinner=False)
+def _load_yolo_demo_model():
+    """加载公开预训练权重，仅用于网页流程演示，不代表管道缺陷模型。"""
+    if YOLO is None:
+        return None
+    try:
+        return YOLO('yolo11n.pt')
+    except Exception:
+        return None
 # —— 全局配色方案（策脉品牌色系）——
 COLORS = {
     'primary': '#1976d2',      # 主色-深蓝
@@ -848,6 +862,41 @@ with st.spinner('加载中...'):
 - 在工单页复核状态流转与巡检反馈
 - 上线前配置 GIS、SCADA、工单接口和权限审计
 ''')
+
+    # —— 首页内嵌智能助手：基于真实风险数据的规则化演示，可替换为大模型接口 ——
+    with st.expander('🧠 管网风险智能助手（本地演示）', expanded=False):
+        st.caption('当前回答基于项目风险结果、SHAP 因素和预算曲线生成；后续可接入 DeepSeek / Qwen，不虚构当前尚未配置的模型调用。')
+        _assistant_ids = merged.nlargest(min(300, len(merged)), 'risk_prob')['pipe_id'].astype(str).tolist()
+        _as1, _as2 = st.columns([1, 2])
+        with _as1:
+            _assistant_pipe = st.selectbox('选择管段', _assistant_ids, key='assistant_pipe') if _assistant_ids else None
+        with _as2:
+            _assistant_question = st.selectbox('想了解什么', ['为什么风险高？', '建议怎么巡检？', '如何安排预算？', '生成管段评估报告'], key='assistant_question')
+        if _assistant_pipe:
+            _ap = merged[merged['pipe_id'].astype(str) == _assistant_pipe].iloc[0]
+            _ap_score = float(_ap['risk_prob']) * 100
+            _ap_level = risk_level(float(_ap['risk_prob']))[0]
+            _ap_rf = risk_factors[risk_factors['pipe_id'].astype(str) == _assistant_pipe]
+            _ap_factors = []
+            if not _ap_rf.empty:
+                for _prefix in ['top1','top2','top3']:
+                    _f = str(_ap_rf.iloc[0].get(f'{_prefix}_feature', ''))
+                    if _f and _f != 'nan': _ap_factors.append(clean_name(_f))
+            _ap_factors = _ap_factors[:3] or ['综合特征贡献']
+            if _assistant_question == '为什么风险高？':
+                _assistant_answer = f'管段 {_assistant_pipe} 当前风险评分 {_ap_score:.0f} 分，等级为 {_ap_level}。主要影响因素包括：' + '、'.join(_ap_factors) + '。建议先查看 SHAP 归因页，再结合现场条件复核。'
+            elif _assistant_question == '建议怎么巡检？':
+                _assistant_answer = f'建议将 {_assistant_pipe} 纳入优先巡检清单，先做与“' + '、'.join(_ap_factors) + '”对应的管壁、接口或压力复核，并在现场反馈中记录异常位置和照片。'
+            elif _assistant_question == '如何安排预算？':
+                _b10 = float(cfg.get('budget_10_recall', 45.0)); _blift = float(cfg.get('budget_10_lift', 4.50))
+                _assistant_answer = f'在当前预算曲线下，前10%管段约覆盖 {int(cfg.get("budget_10_inspected", 728)):,} 条，历史爆管召回约 {_b10:.1f}%，Lift 约 {_blift:.2f} 倍。建议先采用10%方案，再根据班组容量调整。'
+            else:
+                _assistant_answer = (f'管段评估报告草案：编号 {_assistant_pipe}；风险评分 {_ap_score:.0f} 分；风险等级 {_ap_level}；'
+                                     f'主要因素：{"、".join(_ap_factors)}；建议进入优先巡检队列并完成现场复核。'
+                                     '本报告为离线决策演示，正式结论需结合现场检测和生产系统数据。')
+            st.info(_assistant_answer, icon='💬')
+            if _assistant_question == '生成管段评估报告':
+                st.download_button('📄 下载管段评估报告草案', _assistant_answer.encode('utf-8-sig'), f'管段_{_assistant_pipe}_评估报告草案.txt', 'text/plain', key='assistant_report_download')
 
     with st.expander('📍 建议体验路线（点击展开）', expanded=False):
         st.markdown('''
@@ -1477,14 +1526,32 @@ elif page == '🔬 SHAP归因':
             st.caption('不同分组的风险驱动因素差异，用于针对性运维决策')
 
             _group_by = st.selectbox('分组维度', ['pipe_material', 'pipe_age_group', 'pipe_diameter_group'], key='shap_group')
-            if 'pipe_age_group' not in shap_full.columns:
-                shap_full['pipe_age_group'] = pd.cut(shap_full['pipe_age'], bins=[-1,10,20,30,50,200], labels=['0-10年','10-20年','20-30年','30-50年','50年+']).astype(str)
-            if 'pipe_diameter_group' not in shap_full.columns:
-                shap_full['pipe_diameter_group'] = pd.cut(shap_full['pipe_diameter'], bins=[0,100,300,600,3000], labels=['<100mm','100-300mm','300-600mm','>600mm']).astype(str)
+            # shap_values.csv 只保存 SHAP 值和 pipe_id，资产分组字段需从真实快照补齐。
+            _shap_group = shap_full.copy()
+            _asset_cols = [c for c in ['pipe_material', 'pipe_age', 'pipe_diameter'] if c in raw.columns]
+            if _asset_cols:
+                _asset = raw[['pipe_id'] + _asset_cols].drop_duplicates('pipe_id')
+                _shap_group = _shap_group.merge(_asset, on='pipe_id', how='left', suffixes=('', '_asset'))
+                for _c in _asset_cols:
+                    if f'{_c}_asset' in _shap_group.columns and _c not in shap_full.columns:
+                        _shap_group[_c] = _shap_group[f'{_c}_asset']
+            if 'pipe_material' not in _shap_group.columns:
+                _shap_group['pipe_material'] = '未知'
+            _shap_group['pipe_material'] = _shap_group['pipe_material'].fillna('未知').astype(str)
+            if 'pipe_age' not in _shap_group.columns:
+                _shap_group['pipe_age'] = np.nan
+            if 'pipe_diameter' not in _shap_group.columns:
+                _shap_group['pipe_diameter'] = np.nan
+            _shap_group['pipe_age_group'] = pd.cut(_shap_group['pipe_age'], bins=[-1,10,20,30,50,200], labels=['0-10年','10-20年','20-30年','30-50年','50年+']).astype(str).fillna('未知')
+            _shap_group['pipe_diameter_group'] = pd.cut(_shap_group['pipe_diameter'], bins=[0,100,300,600,3000], labels=['<100mm','100-300mm','300-600mm','>600mm']).astype(str).fillna('未知')
 
-            _feat_cols = [c for c in shap_full.columns if c not in ('pipe_id','spatiotemporal_fold','pipe_age_group','pipe_diameter_group','pipe_age','pipe_diameter')]
-            _group_stats = shap_full.groupby(_group_by)[_feat_cols].mean()
-            _top5_global = shap_full[_feat_cols].mean().abs().nlargest(5).index.tolist()
+            _meta_cols = {'pipe_id','spatiotemporal_fold','pipe_material','pipe_age','pipe_diameter','pipe_age_group','pipe_diameter_group'}
+            _feat_cols = [c for c in shap_full.columns if c not in _meta_cols and pd.api.types.is_numeric_dtype(_shap_group[c])]
+            if not _feat_cols:
+                st.warning('当前 SHAP 文件没有可用于分组的数值特征。')
+                st.stop()
+            _group_stats = _shap_group.groupby(_group_by, dropna=False)[_feat_cols].mean()
+            _top5_global = _shap_group[_feat_cols].mean().abs().nlargest(5).index.tolist()
             _group_stats_top5 = _group_stats[_top5_global]
 
             fig_g, ax_g = plt.subplots(figsize=(12, 5))
@@ -3090,6 +3157,71 @@ elif page == '📋 巡检工单':
         st.success(f'✅ 管道 {up_pipe} 的照片已上传（共 {len(st.session_state.wo_photos)} 张）')
         with st.expander('🖼️ 已上传照片记录'):
             st.dataframe(pd.DataFrame(st.session_state.wo_photos), width="stretch", hide_index=True)
+
+    with st.expander('🤖 YOLO 图像识别演示', expanded=bool(up_file)):
+        st.caption('已接入公开预训练 YOLO11n，可运行通用目标检测；当前尚未使用管道缺陷专项数据训练，检测结果仅用于流程演示。')
+        if up_file:
+            _img_col, _review_col = st.columns([1, 2])
+            with _img_col:
+                st.image(up_file, caption='现场照片预览', width="stretch")
+            with _review_col:
+                st.markdown('**当前识别接口状态：** `待接入 YOLO 服务`')
+                _manual_defect = st.selectbox('人工确认的缺陷类型', ['待确认','无明显异常','裂缝/破损','渗漏','腐蚀','接口异常','其他'], key='manual_defect_type')
+                _manual_note = st.text_input('图像复核备注', placeholder='例如：疑似接口渗漏，建议现场复测', key='manual_defect_note')
+                if st.button('▶ 运行识别流程演示', key='run_image_demo', type='primary'):
+                    _yolo_model = _load_yolo_demo_model()
+                    if _yolo_model is None or Image is None:
+                        st.session_state['image_demo_error'] = 'YOLO演示依赖未加载，当前保留人工复核流程。'
+                        st.session_state.pop('yolo_demo_result', None)
+                    else:
+                        try:
+                            up_file.seek(0)
+                            _img_arr = np.array(Image.open(up_file).convert('RGB'))
+                            _yolo_res = _yolo_model.predict(source=_img_arr, conf=0.25, verbose=False)[0]
+                            _plot = _yolo_res.plot()[:, :, ::-1]
+                            _names = _yolo_res.names
+                            _boxes = _yolo_res.boxes
+                            _items = []
+                            if _boxes is not None and len(_boxes):
+                                for _cls, _conf in zip(_boxes.cls.cpu().tolist(), _boxes.conf.cpu().tolist()):
+                                    _items.append({'类别': str(_names.get(int(_cls), int(_cls))), '置信度': f'{float(_conf):.1%}'})
+                            st.session_state['yolo_demo_result'] = {'image': _plot, 'items': _items}
+                            st.session_state.pop('image_demo_error', None)
+                        except Exception as _e:
+                            st.session_state['image_demo_error'] = f'YOLO演示执行失败：{_e}'
+                    st.session_state['image_demo_ran'] = True
+                if st.session_state.get('image_demo_ran'):
+                    st.markdown('**识别流程输出（演示）**')
+                    _yolo_out = st.session_state.get('yolo_demo_result')
+                    _demo_status = '需人工复核' if _manual_defect == '待确认' else ('发现疑似缺陷' if _manual_defect != '无明显异常' else '暂未发现明显异常')
+                    if _yolo_out is not None:
+                        st.image(_yolo_out['image'], caption='YOLO公开预训练模型检测结果（通用目标，仅作流程演示）', width='stretch')
+                        if _yolo_out['items']:
+                            st.dataframe(pd.DataFrame(_yolo_out['items']), hide_index=True, width='stretch')
+                            _demo_status = '检测到通用目标，待人工确认'
+                        else:
+                            st.info('公开预训练模型未检测到通用目标；这不等于没有管道缺陷。', icon='ℹ️')
+                    if st.session_state.get('image_demo_error'):
+                        st.warning(st.session_state['image_demo_error'], icon='⚠️')
+                    _ic1, _ic2 = st.columns(2)
+                    with _ic1:
+                        st.metric('流程状态', _demo_status)
+                    with _ic2:
+                        st.metric('模型状态', 'YOLO待接入', '不虚构置信度')
+                    st.info('当前按钮用于演示“上传→识别→人工确认→写入工单”的业务链路；正式接入 YOLO 权重后，此处替换为检测框、类别和置信度。', icon='ℹ️')
+                if st.button('保存人工复核结果', key='save_image_review'):
+                    _save_feedback({
+                        '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        '管道编号': up_pipe,
+                        '现场结论': '发现异常' if _manual_defect not in ['待确认','无明显异常'] else '正常',
+                        '异常类型': _manual_defect,
+                        '现场备注': _manual_note,
+                        '班组': st.session_state.get('wo_team', ''),
+                        '模型版本': 'Ensemble-v3（图像识别待接入）',
+                    })
+                    st.success('已保存人工图像复核结果，可供后续 YOLO 接口替换使用。')
+        else:
+            st.info('上传照片后点击“运行识别流程演示”，即可显示公开 YOLO 模型的检测框、类别和置信度；管道缺陷专项识别仍需后续训练。', icon='ℹ️')
 
     st.markdown('---')
     st.subheader('📝 现场巡检结果反馈')
