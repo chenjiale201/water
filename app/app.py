@@ -112,10 +112,16 @@ OUTPUTS = ROOT / 'outputs'
 def _setup_font():
     import platform
     from matplotlib.font_manager import fontManager
+    import matplotlib
     _font_dir = _APP_DIR.parent / 'fonts'
     _font_file = _font_dir / 'SimHei.ttf'
     if _font_file.exists():
         fontManager.addfont(str(_font_file))
+        _cache_dir = matplotlib.get_cachedir()
+        for _cf in pathlib.Path(_cache_dir).glob('fontlist*'):
+            try: _cf.unlink()
+            except: pass
+        fontManager.__init__()
         plt.rcParams['font.sans-serif'] = ['SimHei'] + plt.rcParams['font.sans-serif']
     elif platform.system() == 'Windows':
         plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei']
