@@ -99,7 +99,7 @@ if not st.session_state.get('logged_in', False):
             with st.form('login_form'):
                 _login_user = st.text_input('账号', placeholder='请输入账号')
                 _login_pwd = st.text_input('密码', type='password', placeholder='请输入密码')
-                _login_submit = st.form_submit_button('进入系统', type='primary', use_container_width=True)
+                _login_submit = st.form_submit_button('进入系统', type='primary', width="stretch")
             st.markdown('<div class="login-note">演示账号：admin / dispatcher / inspector / leader / repair / finance<br>统一密码：ceimai2026<br>数据仅在本地演示环境使用</div>', unsafe_allow_html=True)
     if _login_submit:
         _account = _AUTH_USERS.get(_login_user.strip())
@@ -351,6 +351,21 @@ def safe_load():
         st.stop()
 
 raw, merged, shap_imp, risk_factors, budget, biz, shap_full, global_shap_mean, pred2025, survival = safe_load()
+# 统一模型指标口径：优先读取项目已保存的固定Holdout结果，避免页面硬编码混用
+_HOLDOUT_METRICS = {}
+_holdout_metrics_path = OUTPUTS / 'holdout_test_metrics.csv'
+if _holdout_metrics_path.exists():
+    try:
+        _hm = pd.read_csv(_holdout_metrics_path).iloc[0]
+        _HOLDOUT_METRICS = {
+            'auc': float(_hm.get('AUC', np.nan)),
+            'pr_auc': float(_hm.get('PR_AUC', np.nan)),
+            'recall10': float(_hm.get('Recall@10%', np.nan)),
+            'lift10': float(_hm.get('Lift@10%', np.nan)),
+        }
+    except Exception:
+        _HOLDOUT_METRICS = {}
+
 # —— 工单状态持久化（重启不丢） ——
 _WO_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'wo_state.csv'
 _FEEDBACK_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'inspection_feedback.csv'
@@ -382,6 +397,73 @@ def _save_feedback(row):
     old = _load_feedback()
     out = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
     out.to_csv(_FEEDBACK_CSV, index=False, encoding='utf-8-sig')
+
+
+def _admin_file_status(path):
+    """返回管理员首页使用的本地文件状态；不把离线文件伪装成生产接口。"""
+    if not path.exists():
+        return {'存在': False, '更新时间': '缺失', '大小': '—', 'mtime': None}
+    try:
+        stat = path.stat()
+        return {
+            '存在': True,
+            '更新时间': datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+            '大小': f'{stat.st_size / 1024:.1f} KB',
+            'mtime': stat.st_mtime,
+        }
+    except OSError:
+        return {'存在': True, '更新时间': '不可读', '大小': '—', 'mtime': None}
+
+
+def _admin_health_snapshot():
+    """根据当前项目真实文件计算首页管理员视图，不进行外部系统探测。"""
+    files = {
+        '管网快照': DATA / 'snapshot_clean.csv',
+        '风险结果': OUTPUTS / 'ensemble' / 'final_submission.csv',
+        '模型配置': APP_CONFIG_PATH,
+        'Holdout指标': OUTPUTS / 'holdout_test_metrics.csv',
+        '工单状态': _WO_CSV,
+        '巡检反馈': _FEEDBACK_CSV,
+        '调度日志': OUTPUTS / 'business' / 'dispatch_log.csv',
+    }
+    status = {name: _admin_file_status(path) for name, path in files.items()}
+    required_ok = all(status[name]['存在'] for name in ('管网快照', '风险结果', '模型配置'))
+    risk_valid = int(merged['risk_prob'].notna().sum())
+    risk_missing = int(merged['risk_prob'].isna().sum())
+    label_missing = int(merged['label'].isna().sum()) if 'label' in merged.columns else len(merged)
+    feedback_df = _load_feedback()
+    wo_df = pd.DataFrame()
+    if _WO_CSV.exists():
+        try:
+            wo_df = pd.read_csv(_WO_CSV, encoding='utf-8-sig')
+        except Exception:
+            wo_df = pd.DataFrame()
+    dispatch_df = pd.DataFrame()
+    dispatch_path = files['调度日志']
+    if dispatch_path.exists():
+        try:
+            dispatch_df = pd.read_csv(dispatch_path, encoding='utf-8-sig')
+        except Exception:
+            dispatch_df = pd.DataFrame()
+    output_size = 0
+    try:
+        output_size = sum(p.stat().st_size for p in OUTPUTS.rglob('*') if p.is_file()) / (1024 * 1024)
+    except OSError:
+        pass
+    return {
+        'files': status,
+        'required_ok': required_ok,
+        'risk_valid': risk_valid,
+        'risk_missing': risk_missing,
+        'label_missing': label_missing,
+        'feedback_count': len(feedback_df),
+        'wo_count': len(wo_df),
+        'dispatch_count': len(dispatch_df),
+        'output_size_mb': output_size,
+        'feedback_df': feedback_df,
+        'wo_df': wo_df,
+        'dispatch_df': dispatch_df,
+    }
 
 RISK_COLORS = {
     '高风险': '#d32f2f', '较高风险': '#f57c00', '中风险': '#fbc02d',
@@ -518,6 +600,9 @@ with st.sidebar.container(border=True):
         ''', unsafe_allow_html=True)
 
 visible_pages = ROLE_MAP[role]['pages']
+for _forced_page in st.session_state.get('_force_pages', []):
+    if _forced_page not in visible_pages:
+        visible_pages.append(_forced_page)
 # 快捷跳转处理
 
 
@@ -552,7 +637,7 @@ page = st.sidebar.selectbox('🧭 导航', visible_pages)
 
 with st.sidebar:
     st.caption(f"当前账号：{st.session_state.get('auth_username', '演示用户')}")
-    if st.button('退出登录', use_container_width=True):
+    if st.button('退出登录', width="stretch"):
         for _key in ['logged_in', 'auth_username', 'auth_role']:
             st.session_state.pop(_key, None)
         st.rerun()
@@ -590,21 +675,66 @@ else:
         .st-caption { font-style: normal; }
     </style>
     ''', unsafe_allow_html=True)
+st.markdown('''
+<style>
+/* 统一的水务蓝视觉组件：用于投屏和录屏时保持层级清晰 */
+[data-testid="stMetric"] {
+    background: linear-gradient(180deg,#ffffff 0%,#f6faff 100%);
+    border: 1px solid #d9e6f2;
+    border-radius: 14px;
+    padding: 0.85rem 1rem;
+    box-shadow: 0 4px 14px rgba(23,78,120,.08);
+    min-height: 92px;
+}
+[data-testid="stMetricLabel"] { color:#496579 !important; font-weight:700 !important; font-size:.92rem !important; }
+[data-testid="stMetricValue"] { color:#124b78 !important; font-size:2rem !important; font-weight:800 !important; letter-spacing:.02em; }
+[data-testid="stMetricDelta"] { font-size:.82rem !important; }
+[data-testid="stVerticalBlockBorderWrapper"] { border-color:#d9e6f2 !important; border-radius:16px !important; box-shadow:0 4px 16px rgba(23,78,120,.06); }
+[data-testid="stDataFrame"] { border:1px solid #d9e6f2; border-radius:12px; }
+.stButton > button, [data-testid="stDownloadButton"] button { border-radius:10px; font-weight:700; min-height:2.55rem; }
+.offline-banner { background:linear-gradient(90deg,#eef7ff,#f7fbff); border:1px solid #b9d8ef; border-left:5px solid #1976d2; border-radius:12px; padding:.72rem 1rem; margin:0 0 1rem; color:#23465f; font-size:.93rem; }
+.flow-ribbon { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; margin:.15rem 0 1.1rem; }
+.flow-step { background:#f4f8fc; border:1px solid #d8e6f2; border-radius:999px; padding:.35rem .72rem; color:#245777; font-weight:700; font-size:.83rem; }
+.flow-arrow { color:#82a9c4; font-weight:800; }
+.page-lead { color:#5b7282; margin-top:-.35rem; margin-bottom:1rem; font-size:1rem; }
+@media (max-width: 900px) { [data-testid="stMetricValue"] {font-size:1.55rem !important;} .flow-step {font-size:.76rem;} }
+</style>
+''', unsafe_allow_html=True)
+
+if page != '🏠 首页概览':
+    st.markdown('<div class="offline-banner"><b>离线决策演示</b>　当前结果基于项目本地数据和已训练模型；接口接入后可连接真实GIS、SCADA与工单系统。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="flow-ribbon"><span class="flow-step">① 风险排序</span><span class="flow-arrow">→</span><span class="flow-step">② SHAP解释</span><span class="flow-arrow">→</span><span class="flow-step">③ 预算规划</span><span class="flow-arrow">→</span><span class="flow-step">④ 巡检派单</span></div>', unsafe_allow_html=True)
+
+if st.session_state.get('_flash_notice'):
+    st.success(st.session_state.pop('_flash_notice'), icon='✅')
+
 st.sidebar.markdown('---')
 use2025 = False
 st.sidebar.markdown(f'管道总数: **{len(merged):,}**')
 st.sidebar.markdown(f'历史爆管: **{merged["label"].sum():.0f}** ({merged["label"].mean():.1%})' if not use2025 else '历史爆管: 无标签（预测模式）')
-st.sidebar.markdown(f'最优 AUC: **{cfg.get("oof_auc",0.8229)}** (OOF 5折时空CV)\nHoldout AUC: **0.8151**')
+st.sidebar.markdown(f'OOF AUC: **{cfg.get("oof_auc",0.8229):.4f}**（当前模型）')
+if _HOLDOUT_METRICS:
+    st.sidebar.markdown(f'固定Holdout AUC: **{_HOLDOUT_METRICS["auc"]:.4f}**（{len(merged):,}条管段口径）')
 st.sidebar.markdown('---')
 if pred2025 is not None and len(pred2025) > 0:
     use2025 = st.sidebar.toggle('📅 切换为 2025 预测数据', value=False, key='use_2025')
     if use2025:
         merged = pred2025.copy()
         st.sidebar.warning('⚠️ 2025 无真实标签，AUC 不可用')
-st.sidebar.caption('训练/验证: 2024年 5折时空CV（无独立 holdout）')
+st.sidebar.caption('指标口径：OOF用于开发评估；Holdout指标单独读取并标注，不混用。')
 st.sidebar.caption(f'v3.0 四模型融合  |  最后更新: {datetime.date.today()}')
 st.sidebar.caption('✨ 新增: What-If沙盘 | 智能派单 | 风险地图')
 
+
+_PAGE_GUIDANCE = {
+    '🖥️ 调度大屏': '从告警总览开始：确认P0数量 → 查看班组负荷 → 一键派发并核对本地日志。',
+    '🗺️ 风险地图': '先按风险等级定位重点管段，再导出坐标供GIS复核；当前坐标为离线演示数据。',
+    '🚨 应急响应': '查看重点管段和处置级别 → 核对模拟联系方式 → 导出应急预案。',
+    '⏰ 季节性预警': '按时间窗口查看历史风险变化，结果用于辅助研判，不替代实时监测。',
+    '🧪 What-If沙盘': '调整管材、管龄等参数观察风险变化，结果用于方案比较，不等同重新训练模型。',
+}
+if page in _PAGE_GUIDANCE:
+    st.markdown(f'<div class="page-lead">{_PAGE_GUIDANCE[page]}</div>', unsafe_allow_html=True)
 
 with st.spinner('加载中...'):
  if page == '🏠 首页概览':
@@ -617,7 +747,7 @@ with st.spinner('加载中...'):
         with mk2: st.metric('OOF AUC', f'{cfg.get("oof_auc",0.8229):.4f}')
         with mk3: st.metric('Top20召回', f'{cfg.get("top20_recall",71.7):.1f}%')
         with mk4: st.metric('特征维度', '332维')
-        with mk5: st.metric('训练时间', '~6min')
+        with mk5: st.metric('固定Holdout AUC', f'{_HOLDOUT_METRICS["auc"]:.4f}' if _HOLDOUT_METRICS else '待生成', '独立诊断口径')
     with st.container(border=True):
         st.markdown("#### 🎯 传统抽检 vs AI精准巡检")
         c1, c2, c3 = st.columns([1, 2, 1])
@@ -648,23 +778,80 @@ with st.spinner('加载中...'):
         _ql = st.columns(5)
         if _qr in ['一线巡检员', '片区巡检组长']:
             with _ql[0]:
-                if st.button('📋 巡检工单', use_container_width=True): st.session_state['_quick_nav'] = '📋 巡检工单'
+                if st.button('📋 巡检工单', width="stretch"): st.session_state['_quick_nav'] = '📋 巡检工单'
             with _ql[1]:
-                if st.button('📋 高风险名单', use_container_width=True): st.session_state['_quick_nav'] = '📋 高风险名单'
+                if st.button('📋 高风险名单', width="stretch"): st.session_state['_quick_nav'] = '📋 高风险名单'
             with _ql[2]:
-                if st.button('🚨 应急响应', use_container_width=True): st.session_state['_quick_nav'] = '🚨 应急响应'
+                if st.button('🚨 应急响应', width="stretch"): st.session_state['_quick_nav'] = '🚨 应急响应'
         elif _qr in ['运维调度主管']:
             with _ql[0]:
-                if st.button('🖥️ 调度大屏', use_container_width=True): st.session_state['_quick_nav'] = '🖥️ 调度大屏'
+                if st.button('🖥️ 调度大屏', width="stretch"): st.session_state['_quick_nav'] = '🖥️ 调度大屏'
             with _ql[1]:
-                if st.button('📈 预算规划', use_container_width=True): st.session_state['_quick_nav'] = '📈 预算规划'
+                if st.button('📈 预算规划', width="stretch"): st.session_state['_quick_nav'] = '📈 预算规划'
             with _ql[2]:
-                if st.button('🗺️ 风险地图', use_container_width=True): st.session_state['_quick_nav'] = '🗺️ 风险地图'
+                if st.button('🗺️ 风险地图', width="stretch"): st.session_state['_quick_nav'] = '🗺️ 风险地图'
         elif _qr in ['系统管理员']:
             with _ql[0]:
-                if st.button('🔬 SHAP归因', use_container_width=True): st.session_state['_quick_nav'] = '🔬 SHAP归因'
+                if st.button('🔬 SHAP归因', width="stretch"): st.session_state['_quick_nav'] = '🔬 SHAP归因'
             with _ql[1]:
-                if st.button('🧪 What-If沙盘', use_container_width=True): st.session_state['_quick_nav'] = '🧪 What-If沙盘'
+                if st.button('🧪 What-If沙盘', width="stretch"): st.session_state['_quick_nav'] = '🧪 What-If沙盘'
+
+    # —— 系统管理员只读运行总览：数据、模型、工单和审计均取自本地真实文件 ——
+    if _qr == '系统管理员':
+        _admin = _admin_health_snapshot()
+        with st.expander('🛡️ 系统管理员视图（本地离线运行状态）', expanded=True):
+            st.caption('本区域只反映当前演示环境中的文件状态；未连接 GIS、SCADA、账号中心或生产工单系统。')
+            _a1, _a2, _a3, _a4 = st.columns(4)
+            with _a1:
+                if _admin['required_ok'] and _admin['risk_missing'] == 0:
+                    st.success('数据状态：正常', icon='✅')
+                else:
+                    st.warning('数据状态：需检查', icon='⚠️')
+                st.metric('有效风险记录', f"{_admin['risk_valid']:,}", f"缺失 {_admin['risk_missing']} 条")
+            with _a2:
+                _model_mtime = _admin['files']['模型配置']['更新时间']
+                st.success('模型状态：已加载', icon='✅' if _admin['files']['模型配置']['存在'] else '⚠️')
+                st.metric('模型版本', 'Ensemble-v3', _model_mtime)
+            with _a3:
+                st.info('接口状态：离线演示', icon='ℹ️')
+                st.metric('本地输出占用', f"{_admin['output_size_mb']:.1f} MB", 'outputs目录')
+            with _a4:
+                st.info('审计状态：本地留痕', icon='🧾')
+                st.metric('工单/反馈', f"{_admin['wo_count']}/{_admin['feedback_count']}", '记录数')
+
+            _data_rows = []
+            for _name in ('管网快照', '风险结果', '模型配置', 'Holdout指标', '工单状态', '巡检反馈', '调度日志'):
+                _item = _admin['files'][_name]
+                _data_rows.append({
+                    '对象': _name,
+                    '状态': '可用' if _item['存在'] else '未生成',
+                    '最后更新时间': _item['更新时间'],
+                    '文件大小': _item['大小'],
+                })
+            st.dataframe(pd.DataFrame(_data_rows), hide_index=True, width="stretch")
+
+            if _admin['label_missing'] > 0:
+                st.warning(f"风险结果中有 {_admin['label_missing']} 条记录缺少历史标签；当前标签口径只用于有标签数据的评估。", icon='⚠️')
+            if not _admin['files']['Holdout指标']['存在']:
+                st.warning('Holdout 指标文件未生成，页面不会把 OOF 指标冒充独立测试指标。', icon='⚠️')
+
+            _log_left, _log_right = st.columns(2)
+            with _log_left:
+                st.markdown('**最近操作留痕**')
+                if len(_admin['dispatch_df']):
+                    st.dataframe(_admin['dispatch_df'].tail(6), hide_index=True, width="stretch")
+                elif len(_admin['feedback_df']):
+                    st.dataframe(_admin['feedback_df'].tail(6), hide_index=True, width="stretch")
+                else:
+                    st.caption('暂无本地派单或巡检反馈记录。')
+            with _log_right:
+                st.markdown('**管理员核查清单**')
+                st.markdown('''
+- 核对数据快照与风险结果更新时间
+- 检查 Holdout 指标是否存在并单独展示
+- 在工单页复核状态流转与巡检反馈
+- 上线前配置 GIS、SCADA、工单接口和权限审计
+''')
 
     with st.expander('📍 建议体验路线（点击展开）', expanded=False):
         st.markdown('''
@@ -812,7 +999,7 @@ with st.spinner('加载中...'):
         _eval_table = pd.DataFrame(_eval_rows)
         for _c in ['AUC', 'PR-AUC', 'Top10%召回率']:
             if _c in _eval_table: _eval_table[_c] = _eval_table[_c].round(3)
-        st.dataframe(_eval_table, use_container_width=True, hide_index=True)
+        st.dataframe(_eval_table, width="stretch", hide_index=True)
         st.caption('指标按当前历史标签计算；样本量较小或组内无正例时，AUC/召回率显示为空。')
 
     with st.expander('🎯 风险概率校准（预测风险与实际发生率）', expanded=False):
@@ -827,11 +1014,11 @@ with st.spinner('加载中...'):
             _mc2.metric('ECE（10个固定概率区间）', f'{_after.ece_10_fixed_bins*100:.2f}%',
                         f'{(_after.ece_10_fixed_bins-_before.ece_10_fixed_bins)*100:+.2f}个百分点', delta_color='inverse')
             st.dataframe(_comparison.rename(columns={'method':'方法','brier':'Brier（越低越好）',
-                         'ece_10_fixed_bins':'ECE','log_loss':'LogLoss'}).round(5), hide_index=True, use_container_width=True)
+                         'ece_10_fixed_bins':'ECE','log_loss':'LogLoss'}).round(5), hide_index=True, width="stretch")
             _cal['排序分组'] = pd.qcut(_cal['ensemble_prob'].rank(method='first'), q=10, labels=False)+1
             _bins = _cal.groupby('排序分组').agg(管道数=('true_label','size'),历史爆管数=('true_label','sum'),
                 原始融合概率=('ensemble_prob','mean'),交叉验证校准概率=('platt_crossfit_prob','mean'),实际爆管率=('true_label','mean'))
-            st.dataframe(_bins.round(4), use_container_width=True)
+            st.dataframe(_bins.round(4), width="stretch")
             _fig_cal, _ax_cal = plt.subplots(figsize=(8,4))
             _ax_cal.plot([0,1],[0,1],'--',color='#9e9e9e',label='理想校准线')
             for _col, _name, _color in [('ensemble_prob','校准前','#90caf9'),('platt_crossfit_prob','Platt交叉验证','#1976d2')]:
@@ -840,7 +1027,7 @@ with st.spinner('加载中...'):
                 _ax_cal.plot(_fixed.predicted,_fixed.observed,'o-',color=_color,label=_name)
             _ax_cal.set(xlabel='平均预测概率',ylabel='历史爆管率',xlim=(0,1),ylim=(0,1),title='校准前后可靠性曲线')
             _ax_cal.legend(); _ax_cal.grid(alpha=.25)
-            st.pyplot(_fig_cal,use_container_width=True); plt.close(_fig_cal)
+            st.pyplot(_fig_cal,width="stretch"); plt.close(_fig_cal)
             st.download_button('下载概率校准验证结果',_cal.to_csv(index=False).encode('utf-8-sig'),'calibration_crossfit.csv','text/csv')
             st.caption('使用既有OOF文件的4个折：每折校准器仅使用其他折标签拟合。属于历史校准层验证，未新增独立测试集。原始0–100风险分数用于排序，不能直接视为爆管概率。校准结果不自动改变工单阈值，不用于2025无标签数据。')
         else:
@@ -875,11 +1062,11 @@ with st.spinner('加载中...'):
             patrol = patrol.sort_values('risk_prob', ascending=False)
             patrol = patrol.drop(columns=['risk_prob'])
             patrol.insert(0, '序号', range(1, len(patrol)+1))
-            st.dataframe(patrol, use_container_width=True, hide_index=True)
+            st.dataframe(patrol, width="stretch", hide_index=True)
             col_dl, col_go = st.columns(2)
             with col_dl:
                 st.download_button('📥 导出快速清单', patrol.to_csv(index=False).encode('utf-8-sig'),
-                                   '巡检清单.csv', 'text/csv', use_container_width=True)
+                                   '巡检清单.csv', 'text/csv', width="stretch")
             with col_go:
                 st.info('💡 上方导航选择「📋 巡检工单」打开完整系统')
     chart_col1, chart_col2 = st.columns([1, 1])
@@ -894,7 +1081,7 @@ with st.spinner('加载中...'):
         fig.update_layout(xaxis_title='风险评分', yaxis_title='管道数量',
                           title='风险评分分布', bargap=0.05, height=350,
                           margin=dict(l=20,r=20,t=40,b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     
     with chart_col2:
         levels = []
@@ -1000,7 +1187,7 @@ with st.spinner('加载中...'):
         columns=pd.cut(merged['risk_prob']*100, bins=[0,45,60,75,100],
         labels=['低风险','中风险','较高风险','高风险']),
         values='pipe_id', aggfunc='count', fill_value=0)
-    st.dataframe(mat_pivot, use_container_width=True)
+    st.dataframe(mat_pivot, width="stretch")
     st.caption('按管材×风险等级交叉统计，网格中数字=管道数量。')
     
 if False: pass
@@ -1143,6 +1330,7 @@ elif page == '🔍 管道查询':
 
 elif page == '🔬 SHAP归因':
     st.title('🔬 SHAP 瀑布归因分析')
+    st.markdown('<div class="page-lead">解释“为什么排在这里” → 形成复核要点 → 返回风险名单或巡检工单执行。</div>', unsafe_allow_html=True)
     with st.expander('❓ 怎么看这个页面'):
         st.markdown('🔴 红色 = 推高风险 &nbsp; 🔵 蓝色 = 降低风险 &nbsp; | &nbsp; 条越长影响越大 &nbsp; | &nbsp; 正数 = 比平均更危险')
     st.markdown('输入管道编号，查看每个因素如何影响风险。🔴推高 🔵降低。*下方数值基于 SHAP 归因分析。*')
@@ -1245,7 +1433,7 @@ elif page == '🔬 SHAP归因':
                     '影响方向': direction,
                 })
             detail_df = pd.DataFrame(detail_rows)
-            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+            st.dataframe(detail_df, width="stretch", hide_index=True)
 
             st.markdown('---')
             st.subheader('📊 同类管道对比')
@@ -1311,12 +1499,12 @@ elif page == '🔬 SHAP归因':
             ax_g.axvline(x=0, color='gray', linewidth=0.8)
             ax_g.legend(title=_group_by, loc='lower right')
             plt.tight_layout()
-            st.pyplot(fig_g, use_container_width=True)
+            st.pyplot(fig_g, width="stretch")
             plt.close(fig_g)
 
             st.markdown('##### 分组特征贡献明细表')
             _group_stats_display = _group_stats_top5.copy().round(4)
-            st.dataframe(_group_stats_display.T, use_container_width=True)
+            st.dataframe(_group_stats_display.T, width="stretch")
 
 elif page == '🧪 What-If沙盘':
     st.title('🧪 What-If 风险沙盘')
@@ -1476,6 +1664,7 @@ elif page == '🧪 What-If沙盘':
 
 elif page == '📋 高风险名单':
     st.title('📋 高风险管道名单')
+    st.markdown('<div class="page-lead">先排序筛选，再查看SHAP证据，最后导出巡检任务；风险分用于优先级，不等同于已发生事故。</div>', unsafe_allow_html=True)
     st.caption('真实预测结果：按模型风险评分筛选巡检优先对象。')
     st.markdown('按风险评分从高到低排列')
     
@@ -1531,6 +1720,8 @@ elif page == '📋 高风险名单':
         display = display[display['pipe_age'] < 10]
 
     display_full = display.copy()
+    if display_full.empty:
+        st.warning('当前筛选条件没有匹配管段，请放宽风险等级、管材或管龄筛选后重试。', icon='⚠️')
     max_display = min(max(len(display_full), 20), len(merged))
     default_display = min(50, len(display_full))
     top_n = st.slider('显示数量', 10, max_display, default_display, 10)
@@ -1577,13 +1768,34 @@ elif page == '📋 高风险名单':
         except:
             return [''] * len(row)
     styled = table.style.apply(highlight_risk, axis=1)
-    st.dataframe(styled, use_container_width=True, height=600, hide_index=True)
+    st.dataframe(styled, width="stretch", height=600, hide_index=True)
+
+    # 风险名单→SHAP→工单联动：减少重复输入管道编号
+    _link_ids = display_full['pipe_id'].astype(str).tolist() if not display_full.empty else []
+    if _link_ids:
+        st.markdown('#### 🔗 下一步操作')
+        _link_pipe = st.selectbox('选择一条管道继续分析', _link_ids, key='risk_link_pipe')
+        _lc1, _lc2 = st.columns(2)
+        with _lc1:
+            if st.button('🔬 查看SHAP归因', width='stretch', key='risk_to_shap'):
+                st.session_state['shared_pipe_id'] = str(_link_pipe)
+                st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + ['🔬 SHAP归因']))
+                st.session_state['_quick_nav'] = '🔬 SHAP归因'
+                st.session_state['_flash_notice'] = f'已带入管道 {str(_link_pipe)}，正在打开SHAP归因。'
+                st.rerun()
+        with _lc2:
+            if st.button('📋 生成巡检工单', width='stretch', key='risk_to_workorder'):
+                st.session_state['shared_pipe_id'] = str(_link_pipe)
+                st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + ['📋 巡检工单']))
+                st.session_state['_quick_nav'] = '📋 巡检工单'
+                st.session_state['_flash_notice'] = f'已带入管道 {str(_link_pipe)}，正在打开巡检工单。'
+                st.rerun()
 
     csv = table.to_csv(index=False).encode('utf-8-sig')
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         st.download_button('📥 下载当前显示 ({n}条)'.format(n=len(table)), csv, 'high_risk_pipes.csv', 'text/csv',
-                           use_container_width=True)
+                           width="stretch")
     with col_dl2:
         full_table = display_full[list(available_cols.keys())].copy()
         full_table.columns = list(available_cols.values())
@@ -1591,7 +1803,7 @@ elif page == '📋 高风险名单':
             full_table['风险评分'] = full_table['风险评分'].apply(lambda x: f'{x*100:.0f} 分')
         full_csv = full_table.to_csv(index=False).encode('utf-8-sig')
         st.download_button('📥 下载全部筛选结果 ({n}条)'.format(n=len(full_table)), full_csv, 'high_risk_pipes_all.csv', 'text/csv',
-                           use_container_width=True)
+                           width="stretch")
 
     st.markdown('---')
     st.subheader('📋 巡检任务书')
@@ -1607,10 +1819,12 @@ elif page == '📋 高风险名单':
         task['坐标'] = display_full['起点坐标']
     task.insert(0, '序号', range(1, len(task)+1))
     st.download_button('📋 导出巡检任务书 (含坐标)', task.to_csv(index=False).encode('utf-8-sig'),
-                       '巡检任务书.csv', 'text/csv', use_container_width=True)
+                       '巡检任务书.csv', 'text/csv', width="stretch")
+    st.caption('导出完成后，可将任务书交给班组；当前导出为本地文件，不会自动回写生产工单系统。')
 
 elif page == '📈 预算规划':
     st.title('📈 巡检预算规划')
+    st.markdown('<div class="page-lead">用覆盖率比较召回和Lift → 选择资源方案 → 导出任务清单。</div>', unsafe_allow_html=True)
     st.caption('真实数据情景分析：预算-召回曲线来自项目已有预测结果；投入方案为辅助决策原型。')
     with st.expander('💰 ROI 投入产出计算器', expanded=False):
         st.caption('💡 输入预算，AI告诉您能多抓多少爆管')
@@ -1687,7 +1901,7 @@ elif page == '📈 预算规划':
     display_table.columns = ['检查比例', '检查管数', '命中正样本', '召回率', '效率倍数']
     display_table['效率倍数'] = display_table['效率倍数'].round(1)
     
-    st.dataframe(display_table, use_container_width=True, hide_index=True)
+    st.dataframe(display_table, width="stretch", hide_index=True)
 
     with st.expander('🧪 巡检覆盖率情景推演（基于真实预算曲线）', expanded=True):
         st.caption('拖动覆盖率查看当前模型在不同巡检资源投入下的预计效果；结果来自项目已有预算-召回数据。')
@@ -1704,6 +1918,13 @@ elif page == '📈 预算规划':
         with _s4:
             st.metric('相对随机提升', f"{_scenario['lift']:.1f} 倍")
         st.info('该模块用于辅助方案比较，实际任务数量仍需结合现场班组能力和安全要求确认。', icon='ℹ️')
+        if st.button('✅ 采用此预算方案并生成任务草案', width='stretch', key='adopt_budget_plan'):
+            st.session_state['selected_budget_ratio'] = float(_scenario['budget_ratio'])
+            st.session_state['_flash_notice'] = f'已保存{_coverage}%覆盖率方案：预计巡检{int(_scenario["inspected"]):,}条、命中{int(_scenario["caught"]):,}条。请进入巡检工单继续分派。'
+            st.success(st.session_state.pop('_flash_notice'), icon='✅')
+            if '📋 巡检工单' in visible_pages:
+                st.session_state['_quick_nav'] = '📋 巡检工单'
+                st.rerun()
 
     st.markdown('---')
     st.subheader('💡 业务建议')
@@ -1714,6 +1935,7 @@ elif page == '📈 预算规划':
     ''')
     budget_csv = budget.to_csv(index=False).encode('utf-8-sig')
     st.download_button('📥 下载完整预算-召回数据', budget_csv, 'budget_recall_curve.csv', 'text/csv')
+    st.caption('预算方案已可保存为本地任务草案；生产系统接入后可进一步绑定人员、车辆和工单编号。')
 
     st.markdown('---')
     st.subheader('💰 成本效益分析（基于真实预测 + 行业参考）')
@@ -1730,7 +1952,7 @@ elif page == '📈 预算规划':
     import pandas as pd
     _cb_df = pd.DataFrame(_cost_ref, columns=['预算比', '巡检策略', '巡检管道数', '捕获爆管数', '节省抢修(万元)', '巡检成本(万元)', '净收益(万元)'])
     _cb_df = _cb_df.drop(columns=['预算比'])
-    st.dataframe(_cb_df, use_container_width=True, hide_index=True)
+    st.dataframe(_cb_df, width="stretch", hide_index=True)
     
     _rnd_catch = 25
     _ai_catch = 113
@@ -1898,7 +2120,7 @@ elif page == '🧪 模型对标':
     _ens_show["AUC"] = _ens_show["AUC"].round(4)
     _ens_show["Recall@10%"] = (_ens_show["Recall@10%"] * 100).round(1).astype(str) + "%"
     _ens_show["Lift@10%"] = _ens_show["Lift@10%"].round(2)
-    st.dataframe(_ens_show, use_container_width=True, hide_index=True)
+    st.dataframe(_ens_show, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.markdown("#### ✅ 无过拟合验证：OOF vs Holdout")
@@ -1919,7 +2141,7 @@ elif page == '🧪 模型对标':
     _sens_show["AUC"] = _sens_show["AUC"].round(4)
     _sens_show["delta_AUC"] = _sens_show["delta_AUC"].apply(
         lambda x: f"{x:+.4f}")
-    st.dataframe(_sens_show, use_container_width=True, hide_index=True)
+    st.dataframe(_sens_show, width="stretch", hide_index=True)
     st.caption("💡 m-estimate 目标编码贡献最大：删除后AUC下降 -0.0139")
 
     st.markdown('---')
@@ -1937,7 +2159,7 @@ elif page == '🧪 模型对标':
     for c in ['逻辑回归', '随机森林', 'LightGBM']:
         display[c] = (display[c] * 100).round(1).astype(str) + '%'
     display['分歧度'] = (display['分歧度'] * 100).round(1).astype(str) + '%'
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
     st.markdown('---')
     st.subheader('🔄 时空交叉验证 Fold')
@@ -2130,7 +2352,7 @@ elif page == '🔗 管网拓扑':
         hoverlabel=dict(bgcolor='#1a1a1a', font=dict(color='white', size=13), bordercolor='#555'),
         dragmode='pan',
     )
-    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+    st.plotly_chart(fig, width="stretch", config={'scrollZoom': True})
     st.caption('拖拽/滚轮操作地图 | 节点越大=越关键枢纽 | 边越红=风险越高 | 搜索框高亮管道')
 elif page == '🗺️ 风险地图':
     st.title('🗺️ 管网风险 GIS 地图')
@@ -2211,7 +2433,7 @@ elif page == '🗺️ 风险地图':
                    size='risk_prob')
             st.markdown('##### 🏆 高风险热点 TOP 5 管段')
             top_hot = heat_df.nlargest(5, 'risk_prob')[['pipe_id','road_name','risk_prob','pipe_material','pipe_age']] if 'road_name' in heat_df.columns else heat_df.nlargest(5, 'risk_prob')[['pipe_id','risk_prob']]
-            st.dataframe(top_hot, use_container_width=True, hide_index=True)
+            st.dataframe(top_hot, width="stretch", hide_index=True)
         if map_layer == '管材类型':
             mat_colors = {'铸铁管':'#d32f2f','球墨铸铁':'#1976d2','钢管':'#388e3c',
                           'UPVC管':'#f57c00','自应力管':'#7b1fa2','金属管':'#0097a7'}
@@ -2265,14 +2487,14 @@ elif page == '🗺️ 风险地图':
             all_exp = all_exp.rename(columns={'pipe_id':'管道编号','risk_level':'风险等级','material':'管材','diameter':'管径mm','age':'管龄年','x':'起点X','y':'起点Y','x_end':'终点X','y_end':'终点Y'})
             all_exp = all_exp[['管道编号','风险评分','风险等级','管材','管径mm','管龄年','起点X','起点Y','终点X','终点Y']]
             st.download_button('📥 导出当前视图管道坐标', all_exp.to_csv(index=False).encode('utf-8-sig'),
-                               '管网坐标_当前视图.csv', 'text/csv', use_container_width=True)
+                               '管网坐标_当前视图.csv', 'text/csv', width="stretch")
         with exp_col2:
             hi_exp = show_df[show_df['risk_level'].isin(['高风险','较高风险'])][['pipe_id','risk_prob','risk_level','material','diameter','age','x','y','x_end','y_end']].copy()
             hi_exp['风险评分'] = (hi_exp['risk_prob']*100).round(0).astype(int)
             hi_exp = hi_exp.rename(columns={'pipe_id':'管道编号','risk_level':'风险等级','material':'管材','diameter':'管径mm','age':'管龄年','x':'起点X','y':'起点Y','x_end':'终点X','y_end':'终点Y'})
             hi_exp = hi_exp[['管道编号','风险评分','风险等级','管材','管径mm','管龄年','起点X','起点Y','终点X','终点Y']]
             st.download_button('🔴 导出高风险+较高风险', hi_exp.to_csv(index=False).encode('utf-8-sig'),
-                               '管网坐标_高风险.csv', 'text/csv', use_container_width=True,
+                               '管网坐标_高风险.csv', 'text/csv', width="stretch",
                                help='可直接发给巡检班组,配合CAD图纸实地定位')
         with exp_col3:
             st.info('💡 导出CSV后可在CAD/GIS软件中加载坐标定位管道')
@@ -2402,7 +2624,7 @@ elif page == '🗺️ 风险地图':
                 legend=dict(orientation='h', y=1.02, x=0, font=dict(size=11)),
             )
 
-            st.plotly_chart(fig, use_container_width=True, key='gis_plotly_map',
+            st.plotly_chart(fig, width="stretch", key='gis_plotly_map',
                 config={'scrollZoom': True, 'displayModeBar': True})
 
             st.caption('💡 悬停查看详情 | 滚轮缩放 | 拖拽平移 | 双击重置 | '
@@ -2485,7 +2707,7 @@ elif page == '🚨 应急响应':
                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             )
-            st.plotly_chart(em_fig, use_container_width=True, config={'scrollZoom': True})
+            st.plotly_chart(em_fig, width="stretch", config={'scrollZoom': True})
     risk_factor_map = {
         'pipe_age': '管龄老化',
         'bury_depth': '覆土深度',
@@ -2560,7 +2782,7 @@ elif page == '🚨 应急响应':
         })
 
     resp_df = pd.DataFrame(resp_data)
-    st.dataframe(resp_df, use_container_width=True, hide_index=True,
+    st.dataframe(resp_df, width="stretch", hide_index=True,
                  column_config={
                      '响应级别': st.column_config.TextColumn(width='small'),
                      'Top风险因子': st.column_config.TextColumn(width='medium'),
@@ -2570,7 +2792,7 @@ elif page == '🚨 应急响应':
     col_e1, col_e2 = st.columns(2)
     with col_e1:
         st.download_button('📥 导出应急响应预案 (CSV)', resp_df.to_csv(index=False).encode('utf-8-sig'),
-                       '应急响应预案.csv', 'text/csv', use_container_width=True)
+                       '应急响应预案.csv', 'text/csv', width="stretch")
 
     st.markdown('---')
     st.warning('⚠️ **演示模式**：以下电话为模拟号码，真实部署需替换为水务公司实际值班电话', icon='📞')
@@ -2615,7 +2837,10 @@ elif page == '📋 巡检工单':
         st.caption(f'💡 选择路段后自动过滤工单；当前共 {len(all_roads)-1} 条路段')
 
     st.title('📋 智能巡检工单系统')
+    st.markdown('<div class="page-lead">接收风险排序结果 → 按SHAP要点执行检查 → 更新状态 → 保存反馈。</div>', unsafe_allow_html=True)
     st.caption('业务流程原型：工单内容来自真实风险排序，状态流转用于演示巡检闭环。')
+    if st.session_state.get('selected_budget_ratio'):
+        st.info(f'已采用预算方案：覆盖率 {st.session_state["selected_budget_ratio"]:.0%}。当前列表可继续筛选、分派和导出任务。', icon='📌')
     st.markdown('**全生命周期管理**：派发 → 巡检 → 维修 → 闭环反馈')
     st.markdown('---')
 
@@ -2703,12 +2928,13 @@ elif page == '📋 巡检工单':
         target_status = st.selectbox('变更为', STATUS_FLOW, key='wo_target')
     with op_col3:
         st.markdown('')
-        if st.button('✅ 批量更新状态', use_container_width=True, type='primary'):
+        if st.button('✅ 批量更新状态', width="stretch", type='primary'):
             for pid in batch_ids:
                 st.session_state.wo_status[pid] = target_status
                 if target_status == '已派发':
                     st.session_state.wo_status[pid] = f'已派发-{st.session_state.wo_team}'
             _save_wo_state(st.session_state.wo_status)
+            st.session_state['_flash_notice'] = f'已将 {len(batch_ids)} 条工单更新为“{target_status}”，可在下方列表查看状态。'
             st.rerun()
 
     st.markdown('---')
@@ -2760,7 +2986,7 @@ elif page == '📋 巡检工单':
         max_s = group['分'].max()
         icon = '🛣️' if len(group)>=3 else '📍'
         st.markdown(f'### {icon} {road_name} — {len(group)}条 ({done}完成) | 最高{max_s}分')
-        st.dataframe(group, use_container_width=True, hide_index=True)
+        st.dataframe(group, width="stretch", hide_index=True)
 
     col_d1, col_d2 = st.columns(2)
     with col_d1:
@@ -2772,11 +2998,11 @@ elif page == '📋 巡检工单':
             _xlsx_buf = io.BytesIO()
             with pd.ExcelWriter(_xlsx_buf, engine='openpyxl') as _wr:
                 wo_df.to_excel(_wr, index=False, sheet_name='巡检工单')
-            st.download_button('📊 导出 Excel (离线可用)', _xlsx_buf.getvalue(), '巡检工单.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', use_container_width=True)
+            st.download_button('📊 导出 Excel (离线可用)', _xlsx_buf.getvalue(), '巡检工单.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', width="stretch")
         except ImportError:
-            st.download_button('📥 导出 Excel (需openpyxl)', b'pip install openpyxl', 'install.txt', use_container_width=True)
+            st.download_button('📥 导出 Excel (需openpyxl)', b'pip install openpyxl', 'install.txt', width="stretch")
     with col_csv:
-        st.download_button('📥 导出工单 CSV', wo_df.to_csv(index=False).encode('utf-8-sig'), '巡检工单.csv', 'text/csv', use_container_width=True)
+        st.download_button('📥 导出工单 CSV', wo_df.to_csv(index=False).encode('utf-8-sig'), '巡检工单.csv', 'text/csv', width="stretch")
     with col_d2:
         st.info('💡 工单状态说明: 待派发→已派发(指定班组)→巡检中→已完成(正常)/待维修(异常)→已修复')
 
@@ -2788,7 +3014,7 @@ elif page == '📋 巡检工单':
     if st.session_state.wo_history:
         hist_df = pd.DataFrame(st.session_state.wo_history[-30:][::-1],
                                columns=['时间', '管道', '操作', '班组'])
-        st.dataframe(hist_df, use_container_width=True, hide_index=True, height=200)
+        st.dataframe(hist_df, width="stretch", hide_index=True, height=200)
     else:
         st.caption('暂无巡查记录。批量更新工单状态后自动记录。')
         st.markdown('---')
@@ -2808,7 +3034,7 @@ elif page == '📋 巡检工单':
         })
         st.success(f'✅ 管道 {up_pipe} 的照片已上传（共 {len(st.session_state.wo_photos)} 张）')
         with st.expander('🖼️ 已上传照片记录'):
-            st.dataframe(pd.DataFrame(st.session_state.wo_photos), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(st.session_state.wo_photos), width="stretch", hide_index=True)
 
     st.markdown('---')
     st.subheader('📝 现场巡检结果反馈')
@@ -2824,7 +3050,7 @@ elif page == '📋 巡检工单':
         with fb3:
             fb_issue = st.selectbox('异常类型', ['无','管壁腐蚀','接口渗漏','压力异常','阀门故障','其他'], key='fb_issue')
         fb_note = st.text_area('现场备注', placeholder='记录检测方法、异常位置、处置建议或复核结论', key='fb_note')
-        fb_submit = st.form_submit_button('保存巡检反馈', type='primary', use_container_width=True)
+        fb_submit = st.form_submit_button('保存巡检反馈', type='primary', width="stretch")
     if fb_submit:
         _save_feedback({
             '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -2838,7 +3064,7 @@ elif page == '📋 巡检工单':
         st.success(f'已保存管道 {fb_pipe} 的巡检反馈。')
         feedback_df = _load_feedback()
     if not feedback_df.empty:
-        st.dataframe(feedback_df.tail(20).iloc[::-1], use_container_width=True, hide_index=True)
+        st.dataframe(feedback_df.tail(20).iloc[::-1], width="stretch", hide_index=True)
         st.download_button('📥 导出巡检反馈', feedback_df.to_csv(index=False).encode('utf-8-sig'), 'inspection_feedback.csv', 'text/csv')
 
     with st.expander('🔧 标准操作卡'):
@@ -2910,7 +3136,7 @@ elif page == '📈 训练日志':
         ax2.grid(axis='x', alpha=0.3)
         
         plt.tight_layout()
-        st.pyplot(fig_log, use_container_width=True)
+        st.pyplot(fig_log, width="stretch")
         plt.close(fig_log)
         st.caption('📊 左: CatBoost 真实训练 LogLoss (2000轮收敛至0.0043) | 右: 网格搜索在8种融合策略中AUC最优(0.8229)，比Stacking-LR高0.006')
 
@@ -3054,9 +3280,9 @@ elif page == '🖥️ 调度大屏':
                 '管龄': fmt_age(row.get('pipe_age', 0)), '状态': status,
                 '行动': '派单' if '待派发' in status else '跟进',
             })
-        st.dataframe(pd.DataFrame(alerts), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(alerts), width="stretch", hide_index=True)
 
-        if st.button('一键派发所有 P0 告警', type='primary', use_container_width=True):
+        if st.button('一键派发所有 P0 告警', type='primary', width="stretch"):
             for _, row in p0_pipes.iterrows():
                 pid = str(row['pipe_id'])
                 if st.session_state.wo_status.get(pid, '待派发') in ['待派发']:
@@ -3080,6 +3306,7 @@ elif page == '🖥️ 调度大屏':
                     pd.DataFrame([fb_row]).to_csv(fb_path, mode='a', header=not fb_path.exists(), index=False, encoding='utf-8-sig')
             except Exception:
                 pass
+            st.session_state['_flash_notice'] = f'已将 {len(p0_pipes)} 条 P0 告警派发至紧急响应组，状态已写入本地演示日志。'
             st.rerun()
 
     with right:
@@ -3113,7 +3340,7 @@ elif page == '🖥️ 调度大屏':
         {'环节': '待维修', '数量': all_status.get('待维修', 0), '说明': '发现隐患，需安排维修'},
         {'环节': '已修复', '数量': all_status.get('已修复', 0), '说明': '维修完成，风险消除'},
     ])
-    st.dataframe(today_df, use_container_width=True, hide_index=True)
+    st.dataframe(today_df, width="stretch", hide_index=True)
 
     st.markdown('---')
     st.caption('调度大屏模拟真实水务调度中心工作流：告警-派单-巡检-维修-闭环。')
@@ -3174,7 +3401,7 @@ elif page == '⏰ 季节性预警':
             surv_display['event'] = surv_display['event'].map({1: '💥已爆', 0: '运行中'})
             surv_display = surv_display.rename(columns={'event': '状态'})
         surv_display.insert(0, '序号', range(1, len(surv_display)+1))
-        st.dataframe(surv_display, use_container_width=True, hide_index=True)
+        st.dataframe(surv_display, width="stretch", hide_index=True)
 
         st.markdown('---')
         st.subheader('📊 高/低风险组生存曲线（Kaplan-Meier）')
