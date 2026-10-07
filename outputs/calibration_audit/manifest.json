@@ -1,0 +1,38 @@
+{
+  "source": "outputs\\ensemble\\ensemble_oof.csv",
+  "source_sha256": "25648d181386b6d1cdf2442969008c5fbd40745ea197d8b618145385bafb302f",
+  "fold_source": "outputs\\oof_predictions.csv",
+  "fold_sha256": "2d6adde2b4ef38807e32430ba01744f62dd8ea28bbd91ae783a733f38d7cd2c4",
+  "folds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "samples": 7288,
+  "positives": 251,
+  "scope": "Historical cross-fitting of calibration layer; not a new independent test of the base model.",
+  "policy": "Original model, ranking scores and operational risk thresholds unchanged. No automatic production deployment.",
+  "limitations": "Existing OOF models may share training data across folds. Calibration method comparison is exploratory; future independent data required.",
+  "display_method": "platt",
+  "metrics": [
+    {
+      "method": "uncalibrated",
+      "brier": 0.04075477141587445,
+      "ece_10_fixed_bins": 0.07276318619648738,
+      "log_loss": 0.16619460686892842
+    },
+    {
+      "method": "platt",
+      "brier": 0.03134998755743963,
+      "ece_10_fixed_bins": 0.005869609808355205,
+      "log_loss": 0.12574427773529986
+    },
+    {
+      "method": "isotonic",
+      "brier": 0.03116576196554038,
+      "ece_10_fixed_bins": 0.0017673142033984447,
+      "log_loss": 0.1272062247705264
+    }
+  ]
+}

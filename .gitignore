@@ -10,3 +10,6 @@ run_all.ps1
 Dockerfile
 docs/
 archive/
+
+# Local row-level calibration predictions (do not publish)
+outputs/calibration_audit/crossfit_predictions.csv

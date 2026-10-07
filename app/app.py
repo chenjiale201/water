@@ -1,5 +1,5 @@
 ﻿"""
-城市供水管网爆管风险预测 — 交互式可视化系统
+大口径供水管网安全风险智能评估与决策 — 交互式可视化系统
 启动: streamlit run app.py
 """
 import streamlit as st
@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 _APP_DIR = Path(__file__).resolve().parent
 _PROJECT_DIR = _APP_DIR.parent
 st.set_page_config(
-    page_title='策脉 · 管网爆管风险预测',
+    page_title='策脉 · 大口径管网安全风险评估',
     page_icon='🔧',
     layout='wide',
     initial_sidebar_state='expanded',
@@ -87,10 +87,10 @@ if not st.session_state.get('logged_in', False):
         st.markdown(f'''
         <div class="login-left">
           {_login_logo_html}
-          <h1>管网爆管风险预测</h1>
-          <p>AI 智能巡检调度决策支持系统</p>
-          <p>面向城市供水管网的风险识别、管道解释、巡检规划与应急辅助平台。</p>
-          <span class="login-tag">7,288 条管道 · 332 维特征 · Ensemble-v3</span>
+          <h1>大口径管网安全风险评估</h1>
+          <p>AI 智能评估与巡检决策支持系统</p>
+          <p>面向 DN300 以上市政供水管网，提供风险识别、根因解释、巡检规划与应急辅助。</p>
+          <span class="login-tag">DN300+ · 7,288 条管道 · 332 维特征 · Ensemble-v3</span>
         </div>
         ''', unsafe_allow_html=True)
     with _right_col:
@@ -252,6 +252,14 @@ def load_all_data():
     sub = sub.rename(columns={'risk_score': 'risk_prob'})
     merged = sub.merge(raw, on='pipe_id', how='left')
     merged['risk_prob'] = merged['risk_prob'] / 100.0
+    _crossfit_path = OUTPUTS / 'calibration_audit' / 'crossfit_predictions.csv'
+    if _crossfit_path.exists():
+        _crossfit = pd.read_csv(_crossfit_path, usecols=['pipe_id', 'platt_crossfit_prob'])
+        _crossfit['pipe_id'] = _crossfit['pipe_id'].astype(str)
+        merged = merged.merge(_crossfit, on='pipe_id', how='left')
+        merged['calibrated_prob'] = merged['platt_crossfit_prob'].clip(0, 1)
+    else:
+        merged['calibrated_prob'] = np.nan
     shap_imp = pd.read_csv(OUTPUTS / 'shap' / 'shap_importance.csv', encoding='utf-8-sig')
 
     risk_factors = pd.read_csv(OUTPUTS / 'phase3' / 'pipe_top3_risk_factors.csv', encoding='utf-8-sig')
@@ -345,6 +353,7 @@ def safe_load():
 raw, merged, shap_imp, risk_factors, budget, biz, shap_full, global_shap_mean, pred2025, survival = safe_load()
 # —— 工单状态持久化（重启不丢） ——
 _WO_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'wo_state.csv'
+_FEEDBACK_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'inspection_feedback.csv'
 
 def _load_wo_state():
     if _WO_CSV.exists():
@@ -359,6 +368,20 @@ def _save_wo_state(d):
     _WO_CSV.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({'pipe_id': list(d.keys()), 'status': list(d.values())}).to_csv(
         _WO_CSV, index=False, encoding='utf-8-sig')
+
+def _load_feedback():
+    if _FEEDBACK_CSV.exists():
+        try:
+            return pd.read_csv(_FEEDBACK_CSV, encoding='utf-8-sig')
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+def _save_feedback(row):
+    _FEEDBACK_CSV.parent.mkdir(parents=True, exist_ok=True)
+    old = _load_feedback()
+    out = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
+    out.to_csv(_FEEDBACK_CSV, index=False, encoding='utf-8-sig')
 
 RISK_COLORS = {
     '高风险': '#d32f2f', '较高风险': '#f57c00', '中风险': '#fbc02d',
@@ -386,6 +409,16 @@ def risk_level(prob):
         return '中风险', '🟡'
     else:
         return '低风险', '🟢'
+
+def risk_action(prob):
+    score = prob * 100
+    if score >= 75:
+        return 'P0｜24小时内现场核查', '管壁/接口/压力联合检查'
+    if score >= 60:
+        return 'P1｜本周安排巡检', '重点检查管龄、管材和接口'
+    if score >= 45:
+        return 'P2｜纳入月度计划', '按周期复核运行状态'
+    return 'P3｜常规巡检', '按既定周期维护'
 
 
 def clean_name(feat):
@@ -422,7 +455,7 @@ def clean_name(feat):
 
 dark_mode = st.sidebar.toggle('🌙 暗色模式', value=False, key='global_dark')
 
-st.sidebar.title('🔧 管网爆管风险预测')
+st.sidebar.title('🔧 大口径管网安全风险')
 st.sidebar.markdown('---')
 quick_pipe = st.sidebar.text_input('🔎 快速查管', placeholder='输入编号后回车', key='quick_search')
 if quick_pipe and quick_pipe.strip():
@@ -575,7 +608,7 @@ st.sidebar.caption('✨ 新增: What-If沙盘 | 智能派单 | 风险地图')
 
 with st.spinner('加载中...'):
  if page == '🏠 首页概览':
-    st.title('🏠 策脉 — 城市供水管网爆管风险预测')
+    st.title('🏠 策脉 — 大口径供水管网安全风险智能评估与决策')
     
     with st.container(border=True):
         st.caption('⚙️ 模型实时状态')
@@ -645,15 +678,25 @@ with st.spinner('加载中...'):
 | 6 | 🗺️ **风险地图** | GIS 坐标直观定位 |
 | 7 | 🚨 **应急响应** | 生成处置预案 |
 ''')
-    with st.expander('📌 数据口径与演示边界（评审说明）', expanded=False):
+    with st.expander('📌 数据来源与系统状态', expanded=False):
         st.markdown('''
 | 类型 | 当前网页中的内容 | 口径 |
 |---|---|---|
-| **真实数据结果** | 7,288 条管道、251 条历史爆管、风险评分、AUC、SHAP、预算召回曲线 | 来自项目官方数据与已训练模型 |
-| **业务原型功能** | 工单状态流转、应急电话、调度大屏、SCADA状态 | 用于展示未来业务流程，尚未接入外部生产系统 |
-| **规划扩展方向** | 数据接口、权限审计、自动回写、模型监控 | 作为后续工程化部署方案 |
+| **真实数据结果** | DN300–1600 mm 的7,288条管道、251条历史爆管、风险评分、AUC、SHAP、预算召回曲线 | 来自项目官方数据与已训练模型 |
+| **业务流程功能** | 工单状态流转、应急电话、调度大屏、SCADA状态 | 当前在本地系统中运行，接口接入后可连接生产系统 |
+| **部署准备项** | 数据接口、权限审计、自动回写、模型监控 | 上线前按水务单位环境配置 |
 ''')
-        st.info('演示时请先展示真实预测结果，再说明原型功能的未来接入路径，避免把概念性流程表述为已完成现场部署。', icon='ℹ️')
+        st.info('风险计算、解释、排序和清单导出使用项目数据；外部系统同步、现场回写和自动派单需配置水务单位接口与权限。', icon='ℹ️')
+    with st.expander('🛠️ 实际运维闭环（当前可运行范围）', expanded=False):
+        st.markdown('''
+| 运维环节 | 当前系统可直接完成的工作 | 生产化接入方向 |
+|---|---|---|
+| 数据核查 | 对7,288条DN300–1600 mm管道进行统一字段和风险计算 | 对接GIS、资产台账和SCADA的定时同步 |
+| 风险筛查 | 输出风险概率、四级风险和高风险排序清单 | 按日/周自动刷新风险结果并保留版本 |
+| 现场核查 | 查看单管道根因、同类管道对比和地图位置 | 回写巡检结果、照片和维修记录 |
+| 资源决策 | 按覆盖率比较召回率，生成巡检优先级和导出清单 | 对接工单系统、人员与车辆排班 |
+''')
+        st.caption('当前网页已经可以完成风险计算、解释、排序和清单导出；外部系统同步、现场回写和自动派单需要水务企业接口与权限后才能上线。')
     st.markdown(f'—— {cfg.get("model_name","CatBoost+RF+LightGBM+LR 四模型加权融合")}')
     st.markdown('---')
     
@@ -668,11 +711,21 @@ with st.spinner('加载中...'):
         st.metric('平均风险', f"{merged['risk_prob'].mean()*100:.1f}分", '满分100')
     with col5:
         st.metric('历史爆管率', f'{cfg.get("burst_rate",3.4)}%', f'{cfg.get("burst_count", int(merged["label"].sum()))}条爆管')
+    with st.expander('📏 风险输出口径', expanded=False):
+        _score_col, _prob_col = st.columns(2)
+        with _score_col:
+            st.metric('风险评分（排序分）', '0–100分')
+            st.caption('用于管道排序、风险分级和巡检优先级；分数越高表示相对风险越高。')
+        with _prob_col:
+            _cal_mean = merged['calibrated_prob'].mean() * 100 if 'calibrated_prob' in merged else np.nan
+            st.metric('校准后概率（历史OOF）', f'{_cal_mean:.1f}%' if pd.notna(_cal_mean) else '待生成')
+            st.caption('基于OOF融合预测和历史标签校准，用于解释发生率；不替代原始排序分。')
+        st.info('页面中的风险评分和校准后概率是两个不同指标：前者支持排序决策，后者帮助理解历史发生率。', icon='ℹ️')
     
     st.markdown('---')
     st.info('💡 在左侧导航栏选择页面开始探索，推荐先从「🔍 管道查询」体验', icon='🧭')
-    with st.expander('🧭 业务落地路径（当前为可运行原型）', expanded=False):
-        st.caption('基于当前真实管网数据展示从风险识别到运维决策的完整路径；工单流转和接口接入属于可扩展的业务原型。')
+    with st.expander('🧭 风险到处置闭环', expanded=False):
+        st.caption('基于当前管网数据完成风险识别、重点筛选、任务执行和方案评估，外部数据同步与现场回写可按接口接入。')
         _flow1, _flow2, _flow3, _flow4 = st.columns(4)
         with _flow1:
             st.markdown('**① 风险识别**')
@@ -686,12 +739,20 @@ with st.spinner('加载中...'):
         with _flow4:
             st.markdown('**④ 方案评估**')
             st.caption('用预算规划比较覆盖率、召回率和投入产出')
+    st.subheader('🧭 今日运维摘要')
+    _urgent = int((merged['risk_prob'] >= 0.75).sum())
+    _week = int(((merged['risk_prob'] >= 0.60) & (merged['risk_prob'] < 0.75)).sum())
+    _feedback_n = len(_load_feedback())
+    _sum1, _sum2, _sum3 = st.columns(3)
+    _sum1.metric('24小时内核查', f'{_urgent}条', 'P0高风险')
+    _sum2.metric('本周巡检计划', f'{_week}条', 'P1较高风险')
+    _sum3.metric('已回收现场反馈', f'{_feedback_n}条', '可用于复核')
+    st.caption('先处理P0，再安排P1；点击左侧“巡检工单”可批量派发和登记反馈。')
     st.subheader('📊 业务价值预估')
     val_col1, val_col2 = st.columns(2)
     with val_col1:
         hp_cnt = int((merged['risk_prob'] > 0.75).sum())
-        avg_repair = 50  # 单次爆管抢修成本（万元），保守估计
-        st.metric('💥 高风险管道', f'{hp_cnt} 条', f'预估可避免损失 {hp_cnt * avg_repair:,} 万元')
+        st.metric('💥 高风险管道', f'{hp_cnt} 条', '用于优先核查，不等同于已实现收益')
     with val_col2:
         top_recall = cfg.get('budget_10_recall', 45.0)
         total_burst = int(merged['label'].sum()) if not use2025 else 0
@@ -725,6 +786,65 @@ with st.spinner('加载中...'):
     ax.spines[['top', 'right']].set_visible(False)
     ax.grid(axis='y', alpha=0.3)
     st.pyplot(fig)
+
+    with st.expander('📐 分组风险表现（用于运行策略校准）', expanded=False):
+        _eval_dim = st.selectbox('分组维度', ['管径区间', '管龄区间', '管材'], key='home_eval_dim')
+        _ev = merged.copy()
+        if _eval_dim == '管径区间':
+            _ev['分组'] = pd.cut(_ev['pipe_diameter'], bins=[299, 400, 600, float('inf')], labels=['300–400mm', '400–600mm', '>600mm'])
+        elif _eval_dim == '管龄区间':
+            _ev['分组'] = pd.cut(_ev['pipe_age'], bins=[-1, 10, 20, 30, float('inf')], labels=['0–10年', '10–20年', '20–30年', '30年以上'])
+        else:
+            _ev['分组'] = _ev['pipe_material'].fillna('未知').astype(str)
+        _eval_rows = []
+        try:
+            from sklearn.metrics import roc_auc_score, average_precision_score
+        except Exception:
+            roc_auc_score = average_precision_score = None
+        for _g, _part in _ev.groupby('分组', observed=False):
+            _part = _part.dropna(subset=['label', 'risk_prob'])
+            _n = len(_part); _pos = int(_part['label'].sum())
+            _auc = roc_auc_score(_part['label'], _part['risk_prob']) if roc_auc_score and _part['label'].nunique() > 1 else np.nan
+            _prauc = average_precision_score(_part['label'], _part['risk_prob']) if average_precision_score and _pos > 0 else np.nan
+            _k = max(1, int(round(_n * 0.10))) if _n else 0
+            _top_recall = (int(_part.nlargest(_k, 'risk_prob')['label'].sum()) / _pos * 100) if _pos and _k else np.nan
+            _eval_rows.append({'分组': str(_g), '管道数': _n, '历史爆管': _pos, 'AUC': _auc, 'PR-AUC': _prauc, 'Top10%召回率': _top_recall})
+        _eval_table = pd.DataFrame(_eval_rows)
+        for _c in ['AUC', 'PR-AUC', 'Top10%召回率']:
+            if _c in _eval_table: _eval_table[_c] = _eval_table[_c].round(3)
+        st.dataframe(_eval_table, use_container_width=True, hide_index=True)
+        st.caption('指标按当前历史标签计算；样本量较小或组内无正例时，AUC/召回率显示为空。')
+
+    with st.expander('🎯 风险概率校准（预测风险与实际发生率）', expanded=False):
+        _audit_dir = OUTPUTS / 'calibration_audit'
+        if (_audit_dir / 'comparison.csv').exists() and (_audit_dir / 'crossfit_predictions.csv').exists():
+            _comparison = pd.read_csv(_audit_dir / 'comparison.csv')
+            _cal = pd.read_csv(_audit_dir / 'crossfit_predictions.csv')
+            _before = _comparison.set_index('method').loc['uncalibrated']
+            _after = _comparison.set_index('method').loc['platt']
+            _mc1, _mc2 = st.columns(2)
+            _mc1.metric('Platt交叉验证 Brier', f'{_after.brier:.4f}', f'{_after.brier-_before.brier:+.4f}', delta_color='inverse')
+            _mc2.metric('ECE（10个固定概率区间）', f'{_after.ece_10_fixed_bins*100:.2f}%',
+                        f'{(_after.ece_10_fixed_bins-_before.ece_10_fixed_bins)*100:+.2f}个百分点', delta_color='inverse')
+            st.dataframe(_comparison.rename(columns={'method':'方法','brier':'Brier（越低越好）',
+                         'ece_10_fixed_bins':'ECE','log_loss':'LogLoss'}).round(5), hide_index=True, use_container_width=True)
+            _cal['排序分组'] = pd.qcut(_cal['ensemble_prob'].rank(method='first'), q=10, labels=False)+1
+            _bins = _cal.groupby('排序分组').agg(管道数=('true_label','size'),历史爆管数=('true_label','sum'),
+                原始融合概率=('ensemble_prob','mean'),交叉验证校准概率=('platt_crossfit_prob','mean'),实际爆管率=('true_label','mean'))
+            st.dataframe(_bins.round(4), use_container_width=True)
+            _fig_cal, _ax_cal = plt.subplots(figsize=(8,4))
+            _ax_cal.plot([0,1],[0,1],'--',color='#9e9e9e',label='理想校准线')
+            for _col, _name, _color in [('ensemble_prob','校准前','#90caf9'),('platt_crossfit_prob','Platt交叉验证','#1976d2')]:
+                _fixed = _cal.assign(bin=np.minimum((_cal[_col]*10).astype(int),9)).groupby('bin').agg(
+                    predicted=(_col,'mean'), observed=('true_label','mean'))
+                _ax_cal.plot(_fixed.predicted,_fixed.observed,'o-',color=_color,label=_name)
+            _ax_cal.set(xlabel='平均预测概率',ylabel='历史爆管率',xlim=(0,1),ylim=(0,1),title='校准前后可靠性曲线')
+            _ax_cal.legend(); _ax_cal.grid(alpha=.25)
+            st.pyplot(_fig_cal,use_container_width=True); plt.close(_fig_cal)
+            st.download_button('下载概率校准验证结果',_cal.to_csv(index=False).encode('utf-8-sig'),'calibration_crossfit.csv','text/csv')
+            st.caption('使用既有OOF文件的4个折：每折校准器仅使用其他折标签拟合。属于历史校准层验证，未新增独立测试集。原始0–100风险分数用于排序，不能直接视为爆管概率。校准结果不自动改变工单阈值，不用于2025无标签数据。')
+        else:
+            st.info('尚未生成校准验证结果，请运行 app/run_calibration_audit.py。')
 
     with st.expander('⚠️ 今日行动建议', expanded=True):
         tab_a, tab_b = st.tabs(['🎯 重点任务', '📋 一键巡检清单'])
@@ -2588,8 +2708,8 @@ elif page == '📋 巡检工单':
                 st.session_state.wo_status[pid] = target_status
                 if target_status == '已派发':
                     st.session_state.wo_status[pid] = f'已派发-{st.session_state.wo_team}'
-            st.rerun()
             _save_wo_state(st.session_state.wo_status)
+            st.rerun()
 
     st.markdown('---')
 
@@ -2618,6 +2738,7 @@ elif page == '📋 巡检工单':
         row_copy = row if isinstance(row, dict) else row.to_dict() if hasattr(row, 'to_dict') else {}
         plain_reason = translate_risk_reason(row_copy, risk_factors[risk_factors['pipe_id']==pid] if not risk_factors[risk_factors['pipe_id']==pid].empty else None)
         check_items = f"【{plain_reason}】" + (check_items if check_items else '')
+        action, action_detail = risk_action(float(row.get('risk_prob', 0)))
 
 
         road = row.get('road_name',''); road = road if pd.notna(road) and str(road)!='nan' else '未知'
@@ -2629,6 +2750,8 @@ elif page == '📋 巡检工单':
             '路段': road,
             '起点坐标': row['起点坐标'],
             '检查要点': check_items,
+            '处置级别': action,
+            '建议动作': action_detail,
         })
 
     wo_df = pd.DataFrame(work_orders)
@@ -2686,6 +2809,37 @@ elif page == '📋 巡检工单':
         st.success(f'✅ 管道 {up_pipe} 的照片已上传（共 {len(st.session_state.wo_photos)} 张）')
         with st.expander('🖼️ 已上传照片记录'):
             st.dataframe(pd.DataFrame(st.session_state.wo_photos), use_container_width=True, hide_index=True)
+
+    st.markdown('---')
+    st.subheader('📝 现场巡检结果反馈')
+    st.caption('将现场核查结果保存为结构化记录，供后续复核、维修跟踪和模型更新使用。')
+    feedback_df = _load_feedback()
+    feedback_pipes = sorted(merged['pipe_id'].astype(str).unique().tolist())
+    with st.form('inspection_feedback_form', clear_on_submit=True):
+        fb1, fb2, fb3 = st.columns(3)
+        with fb1:
+            fb_pipe = st.selectbox('管道编号', feedback_pipes, key='fb_pipe')
+        with fb2:
+            fb_result = st.selectbox('现场结论', ['正常','发现异常','需要维修','已完成维修'], key='fb_result')
+        with fb3:
+            fb_issue = st.selectbox('异常类型', ['无','管壁腐蚀','接口渗漏','压力异常','阀门故障','其他'], key='fb_issue')
+        fb_note = st.text_area('现场备注', placeholder='记录检测方法、异常位置、处置建议或复核结论', key='fb_note')
+        fb_submit = st.form_submit_button('保存巡检反馈', type='primary', use_container_width=True)
+    if fb_submit:
+        _save_feedback({
+            '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            '管道编号': fb_pipe,
+            '现场结论': fb_result,
+            '异常类型': fb_issue,
+            '现场备注': fb_note,
+            '班组': st.session_state.get('wo_team', ''),
+            '模型版本': 'Ensemble-v3',
+        })
+        st.success(f'已保存管道 {fb_pipe} 的巡检反馈。')
+        feedback_df = _load_feedback()
+    if not feedback_df.empty:
+        st.dataframe(feedback_df.tail(20).iloc[::-1], use_container_width=True, hide_index=True)
+        st.download_button('📥 导出巡检反馈', feedback_df.to_csv(index=False).encode('utf-8-sig'), 'inspection_feedback.csv', 'text/csv')
 
     with st.expander('🔧 标准操作卡'):
         st.markdown('| 检查项 | 方法 | 工具 | 判定 |\n|--------|------|------|------|\n| 管壁腐蚀 | CCTV内窥 | 检测机器人 | 壁厚损失>30% |\n| 接口渗漏 | 听音棒+相关仪 | 漏水检测仪 | 持续渗水 |\n| 压力异常 | 压力记录仪 | 便携压力表 | 波动>20% |\n| 阀门状态 | 手动测试 | 阀门扳手 | 无法启闭 |')
@@ -2809,7 +2963,7 @@ elif page == '📈 训练日志':
 
     with st.container(border=True):
         st.subheader('🧩 工程化落地路径（规划）')
-        st.caption('本区用于展示系统从当前真实数据原型向水务生产平台扩展时的接口边界，不代表已经接入外部生产系统。')
+        st.caption('本区说明系统接入水务生产平台所需的接口、权限和运行条件。')
         _dep1, _dep2, _dep3 = st.columns(3)
         with _dep1:
             st.markdown('**数据接入层**')
@@ -2825,7 +2979,7 @@ elif page == '📈 训练日志':
 模型服务：Ensemble-v3，332维特征，5折时空交叉验证
 业务输出：风险评分、SHAP解释、巡检工单、预算召回、应急预案
 上线前置：接入水务单位实际接口、完成权限配置和现场验证
-当前边界：网页中的调度和工单流程用于原型演示，未声明已接入生产系统
+当前状态：调度和工单流程已在本地系统中运行，生产接入需完成接口、权限和现场验证
 '''
         st.download_button('📄 下载部署规划说明', _deploy_note.encode('utf-8-sig'), '策脉部署规划说明.txt', 'text/plain')
 
