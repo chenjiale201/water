@@ -2635,6 +2635,33 @@ elif page == '🚨 应急响应':
     st.title('🚨 爆管应急响应预案')
     st.caption('真实风险结果驱动的应急预案原型：用于展示重点管段筛选和处置建议生成路径。')
     st.markdown('基于模型预测的 **Top 高风险管段**，生成应急处置建议与影响范围评估。')
+    with st.container(border=True):
+        st.subheader('🧰 抢修资源配置（离线决策演示）')
+        st.caption('根据真实风险排序生成资源配置草案；班组、车辆、备件和联系方式需接入水务单位资源台账后生效。')
+        _repair_pool = merged.nlargest(min(100, len(merged)), 'risk_prob').copy()
+        _repair_ids = _repair_pool['pipe_id'].astype(str).tolist()
+        _rc1, _rc2, _rc3 = st.columns(3)
+        with _rc1:
+            _repair_pipe = st.selectbox('重点管段', _repair_ids, key='repair_pipe_select') if _repair_ids else None
+        with _rc2:
+            _repair_team = st.selectbox('拟派抢修班组', ['紧急响应组（演示）', '东片区抢修组（演示）', '西片区抢修组（演示）'], key='repair_team_select')
+        with _rc3:
+            _repair_eta = st.select_slider('预计到场', options=['30分钟内', '1小时内', '2小时内', '当日内'], value='1小时内', key='repair_eta_select')
+        _rc4, _rc5, _rc6 = st.columns(3)
+        with _rc4:
+            st.multiselect('建议备件', ['快速抢修节', '管箍', '阀门组件', '便携压力表'], default=['快速抢修节', '便携压力表'], key='repair_parts_select')
+        with _rc5:
+            st.metric('现场影响用户数', '待SCADA/GIS接口', '当前不虚构')
+        with _rc6:
+            st.metric('通信状态', '离线草案', '接入后可通知')
+        if _repair_pipe:
+            _rp = _repair_pool[_repair_pool['pipe_id'].astype(str) == _repair_pipe].iloc[0]
+            st.info(f'建议动作：先核对 {_repair_pipe} 的阀门与压力状态，再按风险因子安排抢修；当前风险评分 {_rp["risk_prob"]*100:.0f} 分。', icon='📍')
+            _repair_msg = (f'【应急派单草案】管道：{_repair_pipe}\n'
+                           f'班组：{_repair_team}\n预计到场：{_repair_eta}\n'
+                           f'风险评分：{_rp["risk_prob"]*100:.0f} 分\n'
+                           '状态：待生产系统确认后发送')
+            st.download_button('📨 导出抢修通知草案', _repair_msg.encode('utf-8-sig'), '抢修通知草案.txt', 'text/plain', key='repair_notice_download')
     
     if st.session_state.get('is_mobile'):
         high_risk = merged[merged['risk_prob'] >= 0.75].copy()
@@ -2910,6 +2937,38 @@ elif page == '📋 巡检工单':
         s = st.session_state.wo_status.get(pid, '待派发')
         status_counts[s] = status_counts.get(s, 0) + 1
     total = len(filtered)
+
+    with st.container(border=True):
+        st.subheader('📍 现场执行卡（巡检员）')
+        st.caption('用于模拟现场到达、定位确认和异常转维修；保存后写入本地工单状态，不会自动回写生产系统。')
+        _field_ids = filtered['pipe_id_str'].tolist() if len(filtered) else []
+        _field_pipe = st.selectbox('选择现场管道', _field_ids, key='field_pipe_select') if _field_ids else None
+        _fc1, _fc2, _fc3 = st.columns(3)
+        with _fc1:
+            _field_position = st.selectbox('定位确认', ['未到达', '已到达现场', '坐标已核对'], key='field_position_select')
+        with _fc2:
+            _field_signal = st.selectbox('数据接口状态', ['离线演示', '待接入SCADA', '待接入移动端定位'], key='field_signal_select')
+        with _fc3:
+            _field_note = st.text_input('现场快速备注', placeholder='例如：阀门井可达/需开挖', key='field_note_input')
+        _fb1, _fb2, _fb3 = st.columns(3)
+        with _fb1:
+            if st.button('🚗 标记已到达', width='stretch', disabled=not _field_pipe, key='field_arrive_btn'):
+                st.session_state.wo_status[_field_pipe] = '巡检中'
+                _save_wo_state(st.session_state.wo_status)
+                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已标记为“巡检中”。'
+                st.rerun()
+        with _fb2:
+            if st.button('⚠️ 标记待维修', width='stretch', disabled=not _field_pipe, key='field_repair_btn'):
+                st.session_state.wo_status[_field_pipe] = '待维修'
+                _save_wo_state(st.session_state.wo_status)
+                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已转为“待维修”，请抢修队长复核。'
+                st.rerun()
+        with _fb3:
+            if st.button('✅ 完成巡检', width='stretch', disabled=not _field_pipe, key='field_done_btn'):
+                st.session_state.wo_status[_field_pipe] = '已完成'
+                _save_wo_state(st.session_state.wo_status)
+                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已完成巡检，可继续填写现场反馈。'
+                st.rerun()
 
     stat_cols = st.columns(len(STATUS_FLOW))
     for i, s in enumerate(STATUS_FLOW):
