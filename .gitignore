@@ -1,0 +1,12 @@
+﻿__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+_fix_path.py
+_upgrade_web.py
+_polish_final.py
+test_metrics.py
+run_all.ps1
+Dockerfile
+docs/
+archive/

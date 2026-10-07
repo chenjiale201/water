@@ -1,0 +1,17 @@
+{
+  "total_samples": 7288,
+  "positive_samples": 251,
+  "base_rate": 0.0344,
+  "optimal_threshold": 0.49,
+  "default_cost": 20010,
+  "optimal_cost": 19360,
+  "cost_saved": 650,
+  "recall_at_10pct": 0.4104,
+  "recall_at_20pct": 0.7291,
+  "recall_at_05pct": 0.2151,
+  "cost_matrix": {
+    "FN": 100,
+    "FP": 10,
+    "unit_inspection": 5
+  }
+}

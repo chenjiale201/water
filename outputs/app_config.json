@@ -1,0 +1,91 @@
+{
+  "total_pipes": 7288,
+  "avg_risk_score": 10.7,
+  "burst_count": 251,
+  "burst_rate": 3.4,
+  "high_risk_count": 728,
+  "midhigh_risk_count": 1093,
+  "mid_risk_count": 2186,
+  "low_risk_count": 3279,
+  "budget": {
+    "5pct": {
+      "inspected": 364,
+      "caught": 61,
+      "recall": 24.3,
+      "lift": 4.86
+    },
+    "10pct": {
+      "inspected": 728,
+      "caught": 113,
+      "recall": 45.0,
+      "lift": 4.5
+    },
+    "15pct": {
+      "inspected": 1093,
+      "caught": 155,
+      "recall": 61.8,
+      "lift": 4.12
+    },
+    "20pct": {
+      "inspected": 1457,
+      "caught": 180,
+      "recall": 71.7,
+      "lift": 3.59
+    },
+    "25pct": {
+      "inspected": 1822,
+      "caught": 190,
+      "recall": 75.7,
+      "lift": 3.03
+    },
+    "30pct": {
+      "inspected": 2186,
+      "caught": 201,
+      "recall": 80.1,
+      "lift": 2.67
+    }
+  },
+  "budget_5_recall": 24.3,
+  "budget_5_lift": 4.86,
+  "budget_5_inspected": 364,
+  "budget_10_recall": 45.0,
+  "budget_10_lift": 4.5,
+  "budget_10_inspected": 728,
+  "oof_auc": 0.8229,
+  "test_auc": null,
+  "top10_recall": 45.0,
+  "top10_lift": 4.5,
+  "top10_inspected": 728,
+  "top20_recall": 71.7,
+  "efficiency": 4.5,
+  "models": {
+    "CatBoost": 0.8214,
+    "RF": 0.7992,
+    "LightGBM": 0.7838,
+    "LR": 0.789
+  },
+  "ensemble_weights": {
+    "CatBoost": 0.754,
+    "LightGBM": 0.204,
+    "LR": 0.037,
+    "RF": 0.006
+  },
+  "total_features": 332,
+  "model_name": "网格搜索融合 (CatBoost 75.4% + LightGBM 20.4% + LR 3.7% + RF 0.6%)",
+  "model_desc": "4模型网格搜索最优加权融合，AUC=0.8229",
+  "last_updated": "2026-10-05 (真实 ground truth)",
+  "ablation": {
+    "static": {
+      "features": 258,
+      "auc": 0.7287
+    },
+    "hydro": {
+      "features": 316,
+      "auc": 0.747
+    },
+    "topo": {
+      "features": 332,
+      "auc": 0.7524
+    }
+  }
+}

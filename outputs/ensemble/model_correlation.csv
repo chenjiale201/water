@@ -1,0 +1,5 @@
+﻿模型,CatBoost,LR,RF,LightGBM
+CatBoost,1.0,,,
+LR,0.5777,1.0,,
+RF,0.7571,0.6329,1.0,
+LightGBM,0.6962,0.5361,0.7249,1.0
