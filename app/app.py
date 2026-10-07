@@ -865,7 +865,7 @@ with st.spinner('加载中...'):
 
     # —— 首页内嵌智能助手：基于真实风险数据的规则化演示，可替换为大模型接口 ——
     with st.expander('🧠 管网风险智能助手（本地演示）', expanded=False):
-        st.caption('当前回答基于项目风险结果、SHAP 因素和预算曲线生成；后续可接入 DeepSeek / Qwen，不虚构当前尚未配置的模型调用。')
+        st.caption('当前回答基于项目风险结果、SHAP 因素和预算曲线生成；后续可接入 DeepSeek / Qwen。')
         _assistant_ids = merged.nlargest(min(300, len(merged)), 'risk_prob')['pipe_id'].astype(str).tolist()
         _as1, _as2 = st.columns([1, 2])
         with _as1:
