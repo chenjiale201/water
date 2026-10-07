@@ -1,4 +1,4 @@
-﻿"""
+"""
 城市供水管网爆管风险预测 — 交互式可视化系统
 启动: streamlit run app.py
 """
@@ -19,7 +19,7 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 _APP_DIR = Path(__file__).resolve().parent
-_PROJECT_DIR = _APP_DIR.parent
+_PROJECT_DIR = _APP_DIR
 st.set_page_config(
     page_title='策脉 · 管网爆管风险预测',
     page_icon='🔧',
@@ -3049,3 +3049,4 @@ elif page == '⏰ 季节性预警':
 
 if __name__ == '__main__':
     pass
+
