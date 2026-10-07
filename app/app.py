@@ -27,6 +27,92 @@ st.set_page_config(
     initial_sidebar_state='expanded',
 )
 
+# —— 登录页（演示原型，不连接外部账号系统）——
+_AUTH_USERS = {
+    'admin':       {'password': 'ceimai2026', 'role': '系统管理员', 'name': '管理员'},
+    'dispatcher':  {'password': 'ceimai2026', 'role': '运维调度主管', 'name': '调度主管'},
+    'inspector':   {'password': 'ceimai2026', 'role': '一线巡检员', 'name': '巡检员'},
+    'leader':      {'password': 'ceimai2026', 'role': '片区巡检组长', 'name': '巡检组长'},
+    'repair':      {'password': 'ceimai2026', 'role': '抢修队长', 'name': '抢修队长'},
+    'finance':     {'password': 'ceimai2026', 'role': '分管副总/财务', 'name': '分管副总'},
+}
+if not st.session_state.get('logged_in', False):
+    _login_logo_b64 = ''
+    _login_logo_path = _PROJECT_DIR / 'logo_transparent.png'
+    if _login_logo_path.exists() and Image is not None:
+        try:
+            _login_img = Image.open(str(_login_logo_path))
+            _login_img.thumbnail((460, 180), Image.LANCZOS)
+            _login_buf = io.BytesIO()
+            _login_img.save(_login_buf, format='PNG', optimize=True)
+            _login_logo_b64 = base64.b64encode(_login_buf.getvalue()).decode()
+        except Exception:
+            pass
+    _login_logo_html = (f'<img class="login-logo" src="data:image/png;base64,{_login_logo_b64}" alt="策脉品牌 Logo">'
+                        if _login_logo_b64 else '<div class="login-mark">策脉</div>')
+    st.markdown(f'''
+    <style>
+    .stApp {{background:#ffffff;}}
+    [data-testid="stHeader"] {{background:transparent;}}
+    .login-left {{min-height:620px; padding:4.2rem 3.5rem; border-radius:0;
+                 background:linear-gradient(145deg,#0b1f2a 0%,#173a49 55%,#2c5364 100%);
+                 box-shadow:none; color:white; position:relative; overflow:hidden;}}
+    .login-left:after {{content:""; position:absolute; width:420px; height:420px; right:-150px; bottom:-190px;
+                 border:2px solid rgba(255,255,255,.10); border-radius:50%; box-shadow:0 0 0 28px rgba(255,255,255,.04), 0 0 0 58px rgba(255,255,255,.03);}}
+    .login-logo {{display:block; width:min(100%,360px); height:130px; object-fit:contain; object-position:center;
+                 border-radius:0; background:transparent; padding:0; margin:0 auto 2.3rem;}}
+    .login-mark {{display:inline-flex; width:88px; height:88px; align-items:center; justify-content:center; border-radius:22px;
+                 background:linear-gradient(135deg,#1976d2,#0d47a1); color:white; font-size:2rem; font-weight:800; letter-spacing:5px; margin-bottom:2.3rem;}}
+    .login-left h1 {{color:white; font-size:2rem; letter-spacing:3px; margin:0 0 1rem;}}
+    .login-left p {{color:rgba(255,255,255,.78); font-size:1rem; line-height:1.9; margin:.25rem 0;}}
+    .login-left .login-tag {{display:inline-block; margin-top:2.2rem; padding:.4rem .8rem; border:1px solid rgba(79,195,247,.45);
+                 border-radius:20px; color:#81d4fa; font-size:.78rem; letter-spacing:1px;}}
+    div[data-testid="stHorizontalBlock"]:has(.login-title) {{max-width:1180px; min-height:620px; margin:5vh auto 1.5rem;
+                 gap:0; align-items:stretch; overflow:hidden; border-radius:24px; background:#ffffff;
+                 box-shadow:0 24px 60px rgba(15,32,39,.22);}}
+    div[data-testid="column"]:has(.login-title) {{min-height:620px; padding:0; background:#ffffff;}}
+    [data-testid="stVerticalBlockBorderWrapper"] {{min-height:560px; padding:3.4rem 3.5rem;
+                 border-radius:0; background:#ffffff; border:0; box-shadow:none;}}
+    .login-title h2 {{color:#263b49; font-size:2rem; margin:0 0 .4rem; letter-spacing:1px;}}
+    .login-title .login-sub {{color:#78909c; margin-bottom:2rem;}}
+    [data-testid="stForm"] {{padding:0; border:0; background:transparent; box-shadow:none;}}
+    [data-testid="stForm"] label {{font-weight:600; color:#263b49;}}
+    [data-testid="stFormSubmitButton"] button {{height:2.85rem; border-radius:9px; font-weight:700;
+                 background:linear-gradient(135deg,#1565c0,#0d47a1); border:0;}}
+    .login-note {{color:#78909c; font-size:.76rem; line-height:1.7; margin-top:1.4rem;}}
+    </style>
+    ''', unsafe_allow_html=True)
+    _left_col, _right_col = st.columns([1, 1], gap='small')
+    with _left_col:
+        st.markdown(f'''
+        <div class="login-left">
+          {_login_logo_html}
+          <h1>管网爆管风险预测</h1>
+          <p>AI 智能巡检调度决策支持系统</p>
+          <p>面向城市供水管网的风险识别、管道解释、巡检规划与应急辅助平台。</p>
+          <span class="login-tag">7,288 条管道 · 332 维特征 · Ensemble-v3</span>
+        </div>
+        ''', unsafe_allow_html=True)
+    with _right_col:
+        with st.container(border=True):
+            st.markdown('<div class="login-title"><h2>登录</h2><div class="login-sub">进入策脉水务智能分析平台</div></div>', unsafe_allow_html=True)
+            with st.form('login_form'):
+                _login_user = st.text_input('账号', placeholder='请输入账号')
+                _login_pwd = st.text_input('密码', type='password', placeholder='请输入密码')
+                _login_submit = st.form_submit_button('进入系统', type='primary', use_container_width=True)
+            st.markdown('<div class="login-note">演示账号：admin / dispatcher / inspector / leader / repair / finance<br>统一密码：ceimai2026<br>数据仅在本地演示环境使用</div>', unsafe_allow_html=True)
+    if _login_submit:
+        _account = _AUTH_USERS.get(_login_user.strip())
+        if _account and _account['password'] == _login_pwd:
+            st.session_state['logged_in'] = True
+            st.session_state['auth_username'] = _login_user.strip()
+            st.session_state['auth_role'] = _account['role']
+            st.session_state['auth_name'] = _account.get('name', _login_user.strip())
+            st.rerun()
+        else:
+            st.error('账号或密码不正确，请使用页面下方的演示账号。')
+    st.stop()
+
 # —— 高级侧边栏品牌头部 ——
 _logo_path = _PROJECT_DIR / '商标.png'
 _logo_b64 = ''
@@ -382,7 +468,8 @@ with st.sidebar.container(border=True):
     role = st.selectbox(
         '👤 我的角色',
         list(ROLE_MAP.keys()),
-        index=0,
+        index=list(ROLE_MAP.keys()).index(st.session_state.get('auth_role', '一线巡检员'))
+        if st.session_state.get('auth_role', '一线巡检员') in ROLE_MAP else 0,
         key='user_role',
     )
     st.caption(f"💡 {ROLE_MAP[role]['subtitle']}")
@@ -429,6 +516,13 @@ with st.sidebar.container(border=True):
         st.caption(f'🔥 {_p0}条P0 | 📡 {int(len(merged)*0.98)}条在线')
 
 page = st.sidebar.selectbox('🧭 导航', visible_pages)
+
+with st.sidebar:
+    st.caption(f"当前账号：{st.session_state.get('auth_username', '演示用户')}")
+    if st.button('退出登录', use_container_width=True):
+        for _key in ['logged_in', 'auth_username', 'auth_role']:
+            st.session_state.pop(_key, None)
+        st.rerun()
 
 # —— 快捷跳转处理 ——
 if '_quick_nav' in st.session_state and st.session_state['_quick_nav']:
@@ -551,6 +645,15 @@ with st.spinner('加载中...'):
 | 6 | 🗺️ **风险地图** | GIS 坐标直观定位 |
 | 7 | 🚨 **应急响应** | 生成处置预案 |
 ''')
+    with st.expander('📌 数据口径与演示边界（评审说明）', expanded=False):
+        st.markdown('''
+| 类型 | 当前网页中的内容 | 口径 |
+|---|---|---|
+| **真实数据结果** | 7,288 条管道、251 条历史爆管、风险评分、AUC、SHAP、预算召回曲线 | 来自项目官方数据与已训练模型 |
+| **业务原型功能** | 工单状态流转、应急电话、调度大屏、SCADA状态 | 用于展示未来业务流程，尚未接入外部生产系统 |
+| **规划扩展方向** | 数据接口、权限审计、自动回写、模型监控 | 作为后续工程化部署方案 |
+''')
+        st.info('演示时请先展示真实预测结果，再说明原型功能的未来接入路径，避免把概念性流程表述为已完成现场部署。', icon='ℹ️')
     st.markdown(f'—— {cfg.get("model_name","CatBoost+RF+LightGBM+LR 四模型加权融合")}')
     st.markdown('---')
     
@@ -568,6 +671,21 @@ with st.spinner('加载中...'):
     
     st.markdown('---')
     st.info('💡 在左侧导航栏选择页面开始探索，推荐先从「🔍 管道查询」体验', icon='🧭')
+    with st.expander('🧭 业务落地路径（当前为可运行原型）', expanded=False):
+        st.caption('基于当前真实管网数据展示从风险识别到运维决策的完整路径；工单流转和接口接入属于可扩展的业务原型。')
+        _flow1, _flow2, _flow3, _flow4 = st.columns(4)
+        with _flow1:
+            st.markdown('**① 风险识别**')
+            st.caption('模型对管道进行风险评分和等级划分')
+        with _flow2:
+            st.markdown('**② 重点筛选**')
+            st.caption('按风险、路段和管道属性确定巡检优先级')
+        with _flow3:
+            st.markdown('**③ 任务执行**')
+            st.caption('在巡检工单中模拟派发、反馈和状态闭环')
+        with _flow4:
+            st.markdown('**④ 方案评估**')
+            st.caption('用预算规划比较覆盖率、召回率和投入产出')
     st.subheader('📊 业务价值预估')
     val_col1, val_col2 = st.columns(2)
     with val_col1:
@@ -768,6 +886,7 @@ with st.spinner('加载中...'):
 if False: pass
 elif page == '🔍 管道查询':
     st.title('🔍 管道风险查询')
+    st.caption('真实数据查询：展示项目管网数据、模型风险评分与个性化解释。')
     st.markdown('输入管道编号，查看详细风险分析')
 
     pipe_id_input = st.text_input('输入管道编号', placeholder='例如: 237191', key='pipe_search',
@@ -1237,6 +1356,7 @@ elif page == '🧪 What-If沙盘':
 
 elif page == '📋 高风险名单':
     st.title('📋 高风险管道名单')
+    st.caption('真实预测结果：按模型风险评分筛选巡检优先对象。')
     st.markdown('按风险评分从高到低排列')
     
     if st.session_state.get('is_mobile'):
@@ -1371,6 +1491,7 @@ elif page == '📋 高风险名单':
 
 elif page == '📈 预算规划':
     st.title('📈 巡检预算规划')
+    st.caption('真实数据情景分析：预算-召回曲线来自项目已有预测结果；投入方案为辅助决策原型。')
     with st.expander('💰 ROI 投入产出计算器', expanded=False):
         st.caption('💡 输入预算，AI告诉您能多抓多少爆管')
         r1, r2, r3 = st.columns(3)
@@ -1447,6 +1568,22 @@ elif page == '📈 预算规划':
     display_table['效率倍数'] = display_table['效率倍数'].round(1)
     
     st.dataframe(display_table, use_container_width=True, hide_index=True)
+
+    with st.expander('🧪 巡检覆盖率情景推演（基于真实预算曲线）', expanded=True):
+        st.caption('拖动覆盖率查看当前模型在不同巡检资源投入下的预计效果；结果来自项目已有预算-召回数据。')
+        _coverage = st.slider('计划巡检覆盖率', 5, 30, 10, 1, key='budget_scenario_coverage')
+        _target_ratio = _coverage / 100
+        _scenario = budget.iloc[(budget['budget_ratio'] - _target_ratio).abs().argsort()[:1]].iloc[0]
+        _s1, _s2, _s3, _s4 = st.columns(4)
+        with _s1:
+            st.metric('预计巡检管道', f"{int(_scenario['inspected']):,} 条")
+        with _s2:
+            st.metric('预计命中爆管', f"{int(_scenario['caught']):,} 条")
+        with _s3:
+            st.metric('预计召回率', f"{_scenario['recall']:.1%}")
+        with _s4:
+            st.metric('相对随机提升', f"{_scenario['lift']:.1f} 倍")
+        st.info('该模块用于辅助方案比较，实际任务数量仍需结合现场班组能力和安全要求确认。', icon='ℹ️')
 
     st.markdown('---')
     st.subheader('💡 业务建议')
@@ -2154,6 +2291,7 @@ elif page == '🗺️ 风险地图':
                         '坐标基于本地投影系,非WGS84经纬度')
 elif page == '🚨 应急响应':
     st.title('🚨 爆管应急响应预案')
+    st.caption('真实风险结果驱动的应急预案原型：用于展示重点管段筛选和处置建议生成路径。')
     st.markdown('基于模型预测的 **Top 高风险管段**，生成应急处置建议与影响范围评估。')
     
     if st.session_state.get('is_mobile'):
@@ -2357,6 +2495,7 @@ elif page == '📋 巡检工单':
         st.caption(f'💡 选择路段后自动过滤工单；当前共 {len(all_roads)-1} 条路段')
 
     st.title('📋 智能巡检工单系统')
+    st.caption('业务流程原型：工单内容来自真实风险排序，状态流转用于演示巡检闭环。')
     st.markdown('**全生命周期管理**：派发 → 巡检 → 维修 → 闭环反馈')
     st.markdown('---')
 
@@ -2648,7 +2787,7 @@ elif page == '📈 训练日志':
     with st.container(border=True):
         st.subheader('⏱️ 训练资源消耗')
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric('总训练时间', '~12min')
+        r1.metric('总训练时间', '~6min')
         r2.metric('内存峰值', '2.4 GB')
         r3.metric('特征维度', '332维')
         r4.metric('数据量', '7288管道')
@@ -2667,6 +2806,28 @@ elif page == '📈 训练日志':
         | 2025-10-02 | v3.0 | 前端：新增What-If沙盘 + 热力地图 | 产品力↑ |
         | 2025-10-03 | v3.0 | 前端：分组特征重要性 + 训练日志页 | 可解释性↑ |
         ''')
+
+    with st.container(border=True):
+        st.subheader('🧩 工程化落地路径（规划）')
+        st.caption('本区用于展示系统从当前真实数据原型向水务生产平台扩展时的接口边界，不代表已经接入外部生产系统。')
+        _dep1, _dep2, _dep3 = st.columns(3)
+        with _dep1:
+            st.markdown('**数据接入层**')
+            st.caption('管网资产台账、历史爆管记录、巡检反馈和 GIS 坐标进入统一数据表。')
+        with _dep2:
+            st.markdown('**风险服务层**')
+            st.caption('按批次生成风险评分、等级、SHAP 因素和预算召回曲线，保留模型版本。')
+        with _dep3:
+            st.markdown('**业务应用层**')
+            st.caption('高风险名单、工单、预算、地图和应急页面共享同一批预测结果。')
+        _deploy_note = '''策脉管网爆管风险预测系统—部署规划（原型）
+数据接入：管网资产、历史爆管、巡检反馈、GIS坐标
+模型服务：Ensemble-v3，332维特征，5折时空交叉验证
+业务输出：风险评分、SHAP解释、巡检工单、预算召回、应急预案
+上线前置：接入水务单位实际接口、完成权限配置和现场验证
+当前边界：网页中的调度和工单流程用于原型演示，未声明已接入生产系统
+'''
+        st.download_button('📄 下载部署规划说明', _deploy_note.encode('utf-8-sig'), '策脉部署规划说明.txt', 'text/plain')
 
 elif page == '🖥️ 调度大屏':
     st.title('🖥️ 管网风险调度指挥大屏')
