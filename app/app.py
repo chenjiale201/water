@@ -3119,6 +3119,14 @@ elif page == '📋 巡检工单':
         })
 
     wo_df = pd.DataFrame(work_orders)
+    # 过滤条件可能没有命中任何管段；空 DataFrame 没有列时不能直接 groupby。
+    if wo_df.empty:
+        wo_df = pd.DataFrame(columns=['状态', '管道编号', '分', '路段', '起点坐标', '检查要点', '处置级别', '建议动作'])
+        st.info('当前筛选条件下暂无巡检工单。请调整风险等级或区域筛选条件。')
+    elif '路段' not in wo_df.columns:
+        # 兼容旧版工单数据：缺少路段字段时使用统一分组名称。
+        wo_df['路段'] = '未标注路段'
+
     for road_name, group in wo_df.groupby('路段', sort=False):
         done = sum(1 for s in group['状态'] if '已完成' in s or '已修复' in s)
         max_s = group['分'].max()
