@@ -1644,7 +1644,10 @@ elif page == '🧪 What-If沙盘':
                     key=f'whatif_age_{wi_pipe_id}')
             if new_age != int(cur_age):
                 age_old_col = 'pipe_age'
-                age_shap_coef = float(wi_shap.get(age_old_col, 0)) if age_old_col in wi_shap.columns else 0.0
+                # ``wi_shap`` is a one-row DataFrame; ``float(Series)`` raises
+                # on recent pandas versions, so extract the scalar explicitly.
+                age_values = wi_shap[age_old_col].dropna().to_numpy() if age_old_col in wi_shap.columns else []
+                age_shap_coef = float(age_values[0]) if len(age_values) else 0.0
                 delta_total += age_shap_coef * (new_age - cur_age) / 30.0  # 管龄归一化系数（训练集标准差≈30年）
                 st.caption(f'🔀 管龄: {cur_age:.0f} → {new_age} 年')
 
