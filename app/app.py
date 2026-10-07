@@ -110,23 +110,33 @@ DATA = ROOT / 'data'
 OUTPUTS = ROOT / 'outputs'
 
 def _setup_font():
-    import platform
-    from matplotlib.font_manager import fontManager
+    import platform, shutil, os
+    from matplotlib.font_manager import fontManager, FontManager
     import matplotlib
+
     _font_dir = _APP_DIR.parent / 'fonts'
     _font_file = _font_dir / 'SimHei.ttf'
+
+    _cache_dir = matplotlib.get_cachedir()
+    for _cf in Path(_cache_dir).glob('fontlist*'):
+        try: _cf.unlink()
+        except: pass
+
     if _font_file.exists():
         fontManager.addfont(str(_font_file))
-        _cache_dir = matplotlib.get_cachedir()
-        for _cf in pathlib.Path(_cache_dir).glob('fontlist*'):
-            try: _cf.unlink()
-            except: pass
-        fontManager.__init__()
-        plt.rcParams['font.sans-serif'] = ['SimHei'] + plt.rcParams['font.sans-serif']
-    elif platform.system() == 'Windows':
-        plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei']
+
+    if platform.system() == 'Windows':
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei'] + plt.rcParams['font.sans-serif']
     else:
-        plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Sans SC', 'WenQuanYi Micro Hei', 'AR PL UMing CN']
+        _sys_fonts = Path('/usr/share/fonts')
+        if _sys_fonts.exists():
+            for _d in _sys_fonts.rglob('*.ttf'):
+                if any(k in _d.name.lower() for k in ['noto', 'cjk', 'wqy', 'wenquanyi', 'droid']):
+                    try: fontManager.addfont(str(_d))
+                    except: pass
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Noto Sans CJK SC', 'Noto Sans SC', 'WenQuanYi Micro Hei', 'AR PL UMing CN', 'DejaVu Sans'] + plt.rcParams['font.sans-serif']
+
+    fontManager.__init__()
     plt.rcParams['axes.unicode_minus'] = False
 # —— 全局配色方案（策脉品牌色系）——
 COLORS = {
