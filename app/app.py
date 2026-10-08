@@ -568,23 +568,23 @@ if quick_pipe and quick_pipe.strip():
 # ===== 角色筛选（生产系统核心改动） =====
 ROLE_MAP = {
     '一线巡检员': {
-        'pages': ['📋 巡检工单', '📋 高风险名单', '🚨 应急响应'],
+        'pages': ['🏠 我的工作台', '📋 巡检工单', '📋 高风险名单', '🚨 应急响应'],
         'subtitle': '极简清单·快速反馈',
     },
     '片区巡检组长': {
-        'pages': ['📋 巡检工单', '📋 高风险名单', '📈 预算规划', '🔍 管道查询', '🚨 应急响应'],
+        'pages': ['🏠 我的工作台', '📋 巡检工单', '📋 高风险名单', '📈 预算规划', '🔍 管道查询', '🚨 应急响应'],
         'subtitle': '片区派单·反馈审核',
     },
     '运维调度主管': {
-        'pages': ['🖥️ 调度大屏', '📈 预算规划', '📋 高风险名单', '🔍 管道查询', '🗺️ 风险地图', '🚨 应急响应', '⏰ 季节性预警'],
+        'pages': ['🏠 我的工作台', '🖥️ 调度大屏', '📈 预算规划', '📋 高风险名单', '🔍 管道查询', '🗺️ 风险地图', '🚨 应急响应', '⏰ 季节性预警'],
         'subtitle': '全局调度·实时告警',
     },
     '抢修队长': {
-        'pages': ['🚨 应急响应', '🗺️ 风险地图', '🔍 管道查询'],
+        'pages': ['🏠 我的工作台', '🚨 应急响应', '🗺️ 风险地图', '🔍 管道查询'],
         'subtitle': '爆管定位·邻管预警',
     },
     '分管副总/财务': {
-        'pages': ['🏠 首页概览', '📈 预算规划', '📋 高风险名单', '🖥️ 调度大屏', '📈 训练日志'],
+        'pages': ['🏠 我的工作台', '🏠 首页概览', '📈 预算规划', '📋 高风险名单', '🖥️ 调度大屏', '📈 训练日志'],
         'subtitle': 'ROI计算器·投资回报分析',
     },
     '系统管理员': {
@@ -594,16 +594,25 @@ ROLE_MAP = {
 }
 
 with st.sidebar.container(border=True):
-    role = st.selectbox(
-        '👤 我的角色',
-        list(ROLE_MAP.keys()),
-        index=list(ROLE_MAP.keys()).index(st.session_state.get('auth_role', '一线巡检员'))
-        if st.session_state.get('auth_role', '一线巡检员') in ROLE_MAP else 0,
-        key='user_role',
-    )
+    # 登录账号决定岗位权限；仅系统管理员可预览其他岗位，避免普通账号
+    # 登录后看到多身份集合界面，符合真实工作人员的使用方式。
+    _auth_role = st.session_state.get('auth_role', '一线巡检员')
+    if _auth_role == '系统管理员':
+        role = st.selectbox(
+            '👤 岗位视图（管理员预览）',
+            list(ROLE_MAP.keys()),
+            index=list(ROLE_MAP.keys()).index(st.session_state.get('user_role', _auth_role))
+            if st.session_state.get('user_role', _auth_role) in ROLE_MAP else 0,
+            key='user_role',
+        )
+        st.caption('🔐 管理员可预览岗位视图；普通账号按登录身份锁定权限')
+    else:
+        role = _auth_role if _auth_role in ROLE_MAP else '一线巡检员'
+        st.markdown(f'**👤 当前岗位：{role}**')
+        st.caption('🔐 岗位权限已按登录身份锁定')
     st.caption(f"💡 {ROLE_MAP[role]['subtitle']}")
-    show_tech = st.toggle('🛠️ 显示模型技术细节（SHAP/AUC等）', value=False, key='show_tech')
-    is_mobile = st.toggle('📱 移动端极简视图（巡检员）', value=False, key='is_mobile')
+    show_tech = st.toggle('🛠️ 显示模型技术细节（SHAP/AUC等）', value=False, key='show_tech') if _auth_role == '系统管理员' else False
+    is_mobile = st.toggle('📱 移动端极简视图（巡检员）', value=False, key='is_mobile') if role == '一线巡检员' else False
     if is_mobile:
         st.markdown('''
         <style>
@@ -759,8 +768,30 @@ _PAGE_GUIDANCE = {
 if page in _PAGE_GUIDANCE:
     st.markdown(f'<div class="page-lead">{_PAGE_GUIDANCE[page]}</div>', unsafe_allow_html=True)
 
-with st.spinner('加载中...'):
- if page == '🏠 首页概览':
+if page == '🏠 我的工作台':
+    st.title(f'🏠 {st.session_state.get("auth_name", "我的")}工作台')
+    st.caption(f'当前登录岗位：{role} · 仅展示与本人职责相关的任务和重点管段')
+    _my_status = st.session_state.get('wo_status', {})
+    _my_pending = sum(1 for v in _my_status.values() if str(v).startswith(('待派发', '巡检中')))
+    _my_done = sum(1 for v in _my_status.values() if str(v) in ('已完成', '已修复'))
+    _my_p0 = int((merged['risk_prob'] >= 0.75).sum())
+    _my_cols = st.columns(4)
+    _my_cols[0].metric('今日重点管段', f'{_my_p0} 条', 'P0高风险')
+    _my_cols[1].metric('待处理任务', f'{_my_pending} 条')
+    _my_cols[2].metric('已完成任务', f'{_my_done} 条')
+    _my_cols[3].metric('当前岗位', role)
+    st.subheader('📋 我的重点任务')
+    _my_cols = [c for c in ['pipe_id', 'risk_prob', 'road_name', 'pipe_material', 'pipe_age'] if c in merged.columns]
+    _my_tasks = merged.nlargest(10, 'risk_prob')[_my_cols].copy()
+    _my_tasks = _my_tasks.rename(columns={'pipe_id':'管道编号','risk_prob':'风险概率','road_name':'路段','pipe_material':'管材','pipe_age':'管龄'})
+    if '风险概率' in _my_tasks.columns:
+        _my_tasks['风险评分'] = (_my_tasks['风险概率'] * 100).round(0).astype(int)
+        _my_tasks['状态'] = _my_tasks['管道编号'].astype(str).map(lambda x: _my_status.get(x, '待处理'))
+        _my_tasks = _my_tasks.drop(columns=['风险概率'])
+    st.dataframe(_my_tasks, width='stretch', hide_index=True)
+    st.info('处理顺序建议：先核查高风险管段，再在巡检工单页面更新状态和现场反馈。')
+
+elif page == '🏠 首页概览':
     st.title('🏠 策脉 — 大口径供水管网安全风险智能评估与决策')
     
     with st.container(border=True):
