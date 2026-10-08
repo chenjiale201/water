@@ -1885,15 +1885,22 @@ elif page == '📋 高风险名单':
     if _link_ids:
         st.markdown('#### 🔗 下一步操作')
         _link_pipe = st.selectbox('选择一条管道继续分析', _link_ids, key='risk_link_pipe')
-        _lc1, _lc2 = st.columns(2)
+        _lc1, _lc2, _lc3 = st.columns(3)
         with _lc1:
+            if st.button('🔍 查看管道详情', width='stretch', key='risk_to_query'):
+                st.session_state['shared_pipe_id'] = str(_link_pipe)
+                st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + ['🔍 管道查询']))
+                st.session_state['_quick_nav'] = '🔍 管道查询'
+                st.session_state['_flash_notice'] = f'已带入管道 {str(_link_pipe)}，正在打开管道详情。'
+                st.rerun()
+        with _lc2:
             if st.button('🔬 查看SHAP归因', width='stretch', key='risk_to_shap'):
                 st.session_state['shared_pipe_id'] = str(_link_pipe)
                 st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + ['🔬 SHAP归因']))
                 st.session_state['_quick_nav'] = '🔬 SHAP归因'
                 st.session_state['_flash_notice'] = f'已带入管道 {str(_link_pipe)}，正在打开SHAP归因。'
                 st.rerun()
-        with _lc2:
+        with _lc3:
             if st.button('📋 生成巡检工单', width='stretch', key='risk_to_workorder'):
                 st.session_state['shared_pipe_id'] = str(_link_pipe)
                 st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + ['📋 巡检工单']))
