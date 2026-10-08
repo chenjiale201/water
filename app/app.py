@@ -3024,6 +3024,19 @@ elif page == '📋 巡检工单':
 
     STATUS_FLOW = ['待派发', '已派发', '巡检中', '已完成', '待维修', '已修复']
     STATUS_ICON = {'待派发':'⬜', '已派发':'📋', '巡检中':'🔍', '已完成':'✅', '待维修':'🔧', '已修复':'🏁'}
+    STATUS_NEXT = {
+        '待派发': {'已派发'},
+        '已派发': {'巡检中'},
+        '巡检中': {'已完成', '待维修'},
+        '待维修': {'已修复'},
+        '已完成': set(),
+        '已修复': set(),
+    }
+    def _base_status(value):
+        return str(value).split('-', 1)[0]
+    def _can_move(current, target):
+        current = _base_status(current)
+        return current == target or target in STATUS_NEXT.get(current, set())
 
     merged['风险等级'] = merged['risk_prob'].apply(lambda p: risk_level(p)[0])
 
@@ -3098,22 +3111,37 @@ elif page == '📋 巡检工单':
         _fb1, _fb2, _fb3 = st.columns(3)
         with _fb1:
             if st.button('🚗 标记已到达', width='stretch', disabled=not _field_pipe, key='field_arrive_btn'):
-                st.session_state.wo_status[_field_pipe] = '巡检中'
-                _save_wo_state(st.session_state.wo_status)
-                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已标记为“巡检中”。'
-                st.rerun()
+                current = st.session_state.wo_status.get(_field_pipe, '待派发')
+                if not _can_move(current, '巡检中'):
+                    st.warning(f'当前状态为“{_base_status(current)}”，请先完成派发后再标记到达。')
+                else:
+                    st.session_state.wo_status[_field_pipe] = '巡检中'
+                    _save_audit('现场到达确认', _field_pipe, f'{_field_position}/{_field_signal}/{_field_note}')
+                    _save_wo_state(st.session_state.wo_status)
+                    st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已标记为“巡检中”。'
+                    st.rerun()
         with _fb2:
             if st.button('⚠️ 标记待维修', width='stretch', disabled=not _field_pipe, key='field_repair_btn'):
-                st.session_state.wo_status[_field_pipe] = '待维修'
-                _save_wo_state(st.session_state.wo_status)
-                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已转为“待维修”，请抢修队长复核。'
-                st.rerun()
+                current = st.session_state.wo_status.get(_field_pipe, '待派发')
+                if not _can_move(current, '待维修'):
+                    st.warning(f'当前状态为“{_base_status(current)}”，请先完成现场巡检。')
+                else:
+                    st.session_state.wo_status[_field_pipe] = '待维修'
+                    _save_audit('现场转维修', _field_pipe, f'{_field_position}/{_field_note}')
+                    _save_wo_state(st.session_state.wo_status)
+                    st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已转为“待维修”，请抢修队长复核。'
+                    st.rerun()
         with _fb3:
             if st.button('✅ 完成巡检', width='stretch', disabled=not _field_pipe, key='field_done_btn'):
-                st.session_state.wo_status[_field_pipe] = '已完成'
-                _save_wo_state(st.session_state.wo_status)
-                st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已完成巡检，可继续填写现场反馈。'
-                st.rerun()
+                current = st.session_state.wo_status.get(_field_pipe, '待派发')
+                if not _can_move(current, '已完成'):
+                    st.warning(f'当前状态为“{_base_status(current)}”，请先完成现场巡检。')
+                else:
+                    st.session_state.wo_status[_field_pipe] = '已完成'
+                    _save_audit('完成现场巡检', _field_pipe, f'{_field_position}/{_field_signal}/{_field_note}')
+                    _save_wo_state(st.session_state.wo_status)
+                    st.session_state['_flash_notice'] = f'管道 {_field_pipe} 已完成巡检，可继续填写现场反馈。'
+                    st.rerun()
 
     stat_cols = st.columns(len(STATUS_FLOW))
     for i, s in enumerate(STATUS_FLOW):
@@ -3133,12 +3161,24 @@ elif page == '📋 巡检工单':
     with op_col3:
         st.markdown('')
         if st.button('✅ 批量更新状态', width="stretch", type='primary'):
+            blocked = []
+            updated = []
             for pid in batch_ids:
-                st.session_state.wo_status[pid] = target_status
-                if target_status == '已派发':
-                    st.session_state.wo_status[pid] = f'已派发-{st.session_state.wo_team}'
+                current = st.session_state.wo_status.get(pid, '待派发')
+                if _can_move(current, target_status):
+                    st.session_state.wo_status[pid] = target_status
+                    if target_status == '已派发':
+                        st.session_state.wo_status[pid] = f'已派发-{st.session_state.wo_team}'
+                    updated.append(pid)
+                else:
+                    blocked.append(f'{pid}（{_base_status(current)}）')
+            if updated:
+                _save_audit('批量更新工单', ','.join(updated), f'{target_status}/{st.session_state.wo_team}')
             _save_wo_state(st.session_state.wo_status)
-            _save_audit('批量更新工单', ','.join(batch_ids), f'{target_status}/{st.session_state.wo_team}')
+            if blocked:
+                st.warning('以下工单未更新：' + '、'.join(blocked[:8]) + '。请按状态顺序流转。')
+            if not updated:
+                st.stop()
             st.session_state['_flash_notice'] = f'已将 {len(batch_ids)} 条工单更新为“{target_status}”，可在下方列表查看状态。'
             st.rerun()
 
