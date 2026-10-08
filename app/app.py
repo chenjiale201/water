@@ -639,6 +639,9 @@ with st.sidebar.container(border=True):
     st.caption(f"💡 {ROLE_MAP[role]['subtitle']}")
     show_tech = st.toggle('🛠️ 显示模型技术细节（SHAP/AUC等）', value=False, key='show_tech') if _auth_role == '系统管理员' else False
     is_mobile = st.toggle('📱 移动端极简视图（巡检员）', value=False, key='is_mobile') if role == '一线巡检员' else False
+    with st.expander('📖 操作指引', expanded=False):
+        st.caption('推荐流程')
+        st.markdown('1. 从“我的工作台”查看待办\n2. 在“高风险名单”选择重点管段\n3. 查看管道详情和 SHAP 原因\n4. 生成巡检工单并更新状态\n5. 保存现场反馈和复核结果')
     if is_mobile:
         st.markdown('''
         <style>
@@ -695,6 +698,8 @@ if _previous_page and _previous_page != page:
         _nav_history.append(_previous_page)
     st.session_state['_nav_history'] = _nav_history[-20:]
 st.session_state['_last_page'] = page
+if st.session_state.get('shared_pipe_id'):
+    st.info(f'当前管道：**{st.session_state["shared_pipe_id"]}** · 可继续查看详情、SHAP解释或现场工单。', icon='🔗')
 if st.sidebar.button('← 返回上一界面', disabled=not _nav_history, width='stretch'):
     _back_page = _nav_history.pop()
     st.session_state['_force_pages'] = list(set(st.session_state.get('_force_pages', []) + [_back_page]))
@@ -3159,8 +3164,8 @@ elif page == '📋 巡检工单':
     with op_col2:
         target_status = st.selectbox('变更为', STATUS_FLOW, key='wo_target')
     with op_col3:
-        st.markdown('')
-        if st.button('✅ 批量更新状态', width="stretch", type='primary'):
+        _confirm_batch = st.checkbox('确认批量操作', key='wo_confirm_batch')
+        if st.button('✅ 批量更新状态', width="stretch", type='primary', disabled=not _confirm_batch or not batch_ids):
             blocked = []
             updated = []
             for pid in batch_ids:
