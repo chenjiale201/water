@@ -383,6 +383,7 @@ if _holdout_metrics_path.exists():
 # —— 工单状态持久化（重启不丢） ——
 _WO_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'wo_state.csv'
 _FEEDBACK_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'inspection_feedback.csv'
+_AUDIT_CSV = _PROJECT_DIR / 'outputs' / 'business' / 'audit_log.csv'
 
 def _load_wo_state():
     if _WO_CSV.exists():
@@ -412,6 +413,23 @@ def _save_feedback(row):
     out = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
     out.to_csv(_FEEDBACK_CSV, index=False, encoding='utf-8-sig')
 
+def _save_audit(action, pipe_id='', detail=''):
+    """记录本地演示中的关键操作，便于管理员核查责任链。"""
+    _AUDIT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    row = pd.DataFrame([{
+        '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        '账号': st.session_state.get('auth_username', '演示用户'),
+        '岗位': st.session_state.get('auth_role', ''),
+        '操作': action,
+        '管道编号': str(pipe_id),
+        '详情': detail,
+    }])
+    try:
+        header = not _AUDIT_CSV.exists()
+        row.to_csv(_AUDIT_CSV, mode='a', header=header, index=False, encoding='utf-8-sig')
+    except Exception:
+        pass
+
 
 def _admin_file_status(path):
     """返回管理员首页使用的本地文件状态；不把离线文件伪装成生产接口。"""
@@ -438,6 +456,7 @@ def _admin_health_snapshot():
         'Holdout指标': OUTPUTS / 'holdout_test_metrics.csv',
         '工单状态': _WO_CSV,
         '巡检反馈': _FEEDBACK_CSV,
+        '操作审计': _AUDIT_CSV,
         '调度日志': OUTPUTS / 'business' / 'dispatch_log.csv',
     }
     status = {name: _admin_file_status(path) for name, path in files.items()}
@@ -3298,6 +3317,13 @@ elif page == '📋 巡检工单':
             fb_result = st.selectbox('现场结论', ['正常','发现异常','需要维修','已完成维修'], key='fb_result')
         with fb3:
             fb_issue = st.selectbox('异常类型', ['无','管壁腐蚀','接口渗漏','压力异常','阀门故障','其他'], key='fb_issue')
+        fb4, fb5, fb6 = st.columns(3)
+        with fb4:
+            fb_severity = st.selectbox('异常等级', ['无异常','一般隐患','较大隐患','紧急隐患'], key='fb_severity')
+        with fb5:
+            fb_method = st.selectbox('核查方式', ['目视检查','CCTV内窥','听音棒/相关仪','压力记录仪','厚度测量','其他'], key='fb_method')
+        with fb6:
+            fb_location = st.text_input('异常位置', placeholder='如：K12+350，阀门井东侧', key='fb_location')
         fb_note = st.text_area('现场备注', placeholder='记录检测方法、异常位置、处置建议或复核结论', key='fb_note')
         fb_submit = st.form_submit_button('保存巡检反馈', type='primary', width="stretch")
     if fb_submit:
@@ -3306,10 +3332,14 @@ elif page == '📋 巡检工单':
             '管道编号': fb_pipe,
             '现场结论': fb_result,
             '异常类型': fb_issue,
+            '异常等级': fb_severity,
+            '核查方式': fb_method,
+            '异常位置': fb_location,
             '现场备注': fb_note,
             '班组': st.session_state.get('wo_team', ''),
             '模型版本': 'Ensemble-v3',
         })
+        _save_audit('保存巡检反馈', fb_pipe, f'{fb_result}/{fb_issue}/{fb_severity}')
         st.success(f'已保存管道 {fb_pipe} 的巡检反馈。')
         feedback_df = _load_feedback()
     if not feedback_df.empty:
