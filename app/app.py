@@ -478,6 +478,12 @@ def _admin_health_snapshot():
             dispatch_df = pd.read_csv(dispatch_path, encoding='utf-8-sig')
         except Exception:
             dispatch_df = pd.DataFrame()
+    audit_df = pd.DataFrame()
+    if _AUDIT_CSV.exists():
+        try:
+            audit_df = pd.read_csv(_AUDIT_CSV, encoding='utf-8-sig')
+        except Exception:
+            audit_df = pd.DataFrame()
     output_size = 0
     try:
         output_size = sum(p.stat().st_size for p in OUTPUTS.rglob('*') if p.is_file()) / (1024 * 1024)
@@ -496,6 +502,7 @@ def _admin_health_snapshot():
         'feedback_df': feedback_df,
         'wo_df': wo_df,
         'dispatch_df': dispatch_df,
+        'audit_df': audit_df,
     }
 
 RISK_COLORS = {
@@ -893,7 +900,7 @@ elif page == '🏠 首页概览':
                 st.metric('工单/反馈', f"{_admin['wo_count']}/{_admin['feedback_count']}", '记录数')
 
             _data_rows = []
-            for _name in ('管网快照', '风险结果', '模型配置', 'Holdout指标', '工单状态', '巡检反馈', '调度日志'):
+            for _name in ('管网快照', '风险结果', '模型配置', 'Holdout指标', '工单状态', '巡检反馈', '操作审计', '调度日志'):
                 _item = _admin['files'][_name]
                 _data_rows.append({
                     '对象': _name,
@@ -911,7 +918,9 @@ elif page == '🏠 首页概览':
             _log_left, _log_right = st.columns(2)
             with _log_left:
                 st.markdown('**最近操作留痕**')
-                if len(_admin['dispatch_df']):
+                if len(_admin.get('audit_df', pd.DataFrame())):
+                    st.dataframe(_admin['audit_df'].tail(8).iloc[::-1], hide_index=True, width="stretch")
+                elif len(_admin['dispatch_df']):
                     st.dataframe(_admin['dispatch_df'].tail(6), hide_index=True, width="stretch")
                 elif len(_admin['feedback_df']):
                     st.dataframe(_admin['feedback_df'].tail(6), hide_index=True, width="stretch")
@@ -3129,6 +3138,7 @@ elif page == '📋 巡检工单':
                 if target_status == '已派发':
                     st.session_state.wo_status[pid] = f'已派发-{st.session_state.wo_team}'
             _save_wo_state(st.session_state.wo_status)
+            _save_audit('批量更新工单', ','.join(batch_ids), f'{target_status}/{st.session_state.wo_team}')
             st.session_state['_flash_notice'] = f'已将 {len(batch_ids)} 条工单更新为“{target_status}”，可在下方列表查看状态。'
             st.rerun()
 
